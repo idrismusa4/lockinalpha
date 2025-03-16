@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 
 interface VideoPlayerProps {
   videoUrl: string;
@@ -9,14 +9,57 @@ interface VideoPlayerProps {
 export default function VideoPlayer({ videoUrl }: VideoPlayerProps) {
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   
-  const handleVideoError = () => {
+  useEffect(() => {
+    // Reset state when video URL changes
+    setError(null);
+    setLoaded(false);
+    setDebugInfo(null);
+    
+    // Log the video URL for debugging
+    console.log("Video URL:", videoUrl);
+    
+    // Check if URL is valid
+    if (!videoUrl || !videoUrl.startsWith('http')) {
+      setError("Invalid video URL. Please try again.");
+      setDebugInfo(`Received invalid URL: ${videoUrl}`);
+    }
+    
+    // Test accessibility of the URL
+    const testFetch = async () => {
+      try {
+        const response = await fetch(videoUrl, { method: 'HEAD' });
+        setDebugInfo(`URL status: ${response.status}, Content-Type: ${response.headers.get('content-type')}`);
+        
+        if (!response.ok) {
+          setError(`Video resource not available (Status: ${response.status})`);
+        }
+      } catch (err) {
+        setDebugInfo(`Fetch error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    
+    if (videoUrl && videoUrl.startsWith('http')) {
+      testFetch();
+    }
+  }, [videoUrl]);
+  
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+    const video = e.currentTarget;
+    const errorCode = video.error?.code || 'unknown';
+    const errorMessage = video.error?.message || 'unknown error';
+    
+    console.error("Video error:", { code: errorCode, message: errorMessage });
+    setDebugInfo(`Error code: ${errorCode}, Message: ${errorMessage}`);
     setError("Failed to load video. The video file may be corrupted or unavailable.");
   };
   
   const handleVideoLoaded = () => {
     setLoaded(true);
+    setError(null);
+    console.log("Video loaded successfully");
   };
   
   const handleRetry = () => {
@@ -56,6 +99,13 @@ export default function VideoPlayer({ videoUrl }: VideoPlayerProps) {
         )}
       </div>
       
+      {/* Debugging info section */}
+      {debugInfo && (
+        <div className="mb-4 p-2 bg-gray-100 border border-gray-300 rounded-md">
+          <p className="text-xs text-gray-700 font-mono">{debugInfo}</p>
+        </div>
+      )}
+      
       {loaded && !error && (
         <div className="flex gap-2 justify-between">
           <a
@@ -87,19 +137,24 @@ export default function VideoPlayer({ videoUrl }: VideoPlayerProps) {
       )}
       
       {/* Always show the direct URL as a fallback */}
-      {!loaded && (
-        <div className="mt-4 p-3 bg-gray-100 rounded-md">
-          <p className="text-sm text-gray-600 mb-1">If the video doesn't load, you can access it directly:</p>
-          <a 
-            href={videoUrl} 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="text-sm text-blue-600 hover:underline break-all"
-          >
-            {videoUrl}
-          </a>
-        </div>
-      )}
+      <div className="mt-4 p-3 bg-gray-100 rounded-md">
+        <p className="text-sm text-gray-600 mb-1">Video URL:</p>
+        <a 
+          href={videoUrl} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-sm text-blue-600 hover:underline break-all"
+        >
+          {videoUrl}
+        </a>
+      </div>
+      
+      {/* Additional info */}
+      <div className="mt-4 p-3 bg-yellow-50 rounded-md">
+        <p className="text-sm text-yellow-800">
+          <strong>Troubleshooting:</strong> If the video doesn't load, try watching it directly in a new tab or downloading it.
+        </p>
+      </div>
     </div>
   );
 } 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 
 interface VideoGeneratorProps {
@@ -13,12 +13,26 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [statusCheckAttempts, setStatusCheckAttempts] = useState(0);
+  const maxStatusCheckAttempts = 20; // Maximum number of failed status checks before giving up
+  const statusCheckRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Cleanup function to clear any active timeouts
+  const cleanup = () => {
+    if (statusCheckRef.current) {
+      clearTimeout(statusCheckRef.current);
+      statusCheckRef.current = null;
+    }
+  };
   
   const handleGenerateVideo = async () => {
+    // Clear any previous state
     setLoading(true);
     setError(null);
     setProgress(0);
     setJobId(null);
+    setStatusCheckAttempts(0);
+    cleanup();
     
     try {
       console.log("Starting video generation process...");
@@ -40,8 +54,21 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
       // Poll for video generation status
       const checkStatus = async () => {
         try {
-          console.log(`Checking status for job: ${newJobId}...`);
+          // Clear the current timeout reference
+          statusCheckRef.current = null;
+          
+          // If we've exceeded the maximum number of attempts, give up
+          if (statusCheckAttempts >= maxStatusCheckAttempts) {
+            setError(`Gave up after ${maxStatusCheckAttempts} failed attempts to check status. The job may still be processing.`);
+            setLoading(false);
+            return;
+          }
+          
+          console.log(`Checking status for job: ${newJobId}... (Attempt ${statusCheckAttempts + 1}/${maxStatusCheckAttempts})`);
           const statusResponse = await axios.get(`/api/videoStatus?jobId=${newJobId}`);
+          
+          // Reset the status check attempts on success
+          setStatusCheckAttempts(0);
           
           console.log(`Got status response:`, statusResponse.data);
           
@@ -62,28 +89,41 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
             const currentProgress = statusResponse.data.progress || 0;
             console.log(`Video still processing: ${currentProgress}% complete`);
             setProgress(currentProgress);
-            setTimeout(checkStatus, 2000); // Check again in 2 seconds
+            
+            // Schedule the next status check
+            statusCheckRef.current = setTimeout(checkStatus, 2000);
           }
         } catch (err) {
           console.error("Error checking video status:", err);
           
-          // Try to provide more helpful error messages
-          if (axios.isAxiosError(err) && err.response) {
-            if (err.response.status === 404) {
-              setError(`Job not found (ID: ${newJobId}). The processing job may have been lost. Please try again.`);
-            } else {
-              setError(`Failed to check video status: ${err.response.status} ${err.response.statusText}`);
-            }
-          } else {
-            setError(`Failed to check video generation status: ${err instanceof Error ? err.message : 'Unknown error'}`);
-          }
+          // Increment the number of failed attempts
+          setStatusCheckAttempts(prev => prev + 1);
           
-          setLoading(false);
+          if (statusCheckAttempts < maxStatusCheckAttempts - 1) {
+            // If we haven't reached the max attempts, schedule another check
+            // with increasing backoff time
+            const backoffTime = Math.min(2000 * Math.pow(1.5, statusCheckAttempts), 10000);
+            console.log(`Retrying status check in ${backoffTime}ms (attempt ${statusCheckAttempts + 1}/${maxStatusCheckAttempts})`);
+            statusCheckRef.current = setTimeout(checkStatus, backoffTime);
+          } else {
+            // Try to provide more helpful error messages
+            if (axios.isAxiosError(err) && err.response) {
+              if (err.response.status === 404) {
+                setError(`Job not found (ID: ${newJobId}). The processing job may have been lost. Please try again.`);
+              } else {
+                setError(`Failed to check video status: ${err.response.status} ${err.response.statusText}`);
+              }
+            } else {
+              setError(`Failed to check video generation status: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            }
+            
+            setLoading(false);
+          }
         }
       };
       
       // Start polling after a short delay
-      setTimeout(checkStatus, 2000);
+      statusCheckRef.current = setTimeout(checkStatus, 2000);
       
     } catch (err) {
       console.error("Error generating video:", err);
@@ -101,9 +141,19 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
   
   // Function to retry video generation
   const handleRetry = () => {
+    // Clean up any existing timeouts
+    cleanup();
+    
     // Just call handleGenerateVideo again
     handleGenerateVideo();
   };
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanup();
+    };
+  }, []);
   
   return (
     <div className="w-full max-w-md mx-auto p-4 bg-white rounded-lg shadow-md">
@@ -135,6 +185,11 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
           {jobId && (
             <p className="text-xs text-gray-400 mt-1">
               Job ID: {jobId}
+            </p>
+          )}
+          {statusCheckAttempts > 0 && (
+            <p className="text-xs text-amber-600 mt-1">
+              Status check retry attempts: {statusCheckAttempts}/{maxStatusCheckAttempts}
             </p>
           )}
         </div>

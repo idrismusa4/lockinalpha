@@ -1,4 +1,5 @@
-import { AbsoluteFill, Sequence, Series, useVideoConfig, Audio, useCurrentFrame, spring, Easing } from 'remotion';
+import { AbsoluteFill, Sequence, Series, useVideoConfig, useCurrentFrame, spring, Easing } from 'remotion';
+import { Audio } from '@remotion/player';
 import React from 'react';
 import { VideoLectureProps } from './index';
 

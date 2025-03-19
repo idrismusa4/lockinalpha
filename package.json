@@ -39,12 +39,6 @@
     "@radix-ui/react-toggle": "^1.0.3",
     "@radix-ui/react-toggle-group": "^1.0.4",
     "@radix-ui/react-tooltip": "^1.0.7",
-    "@remotion/bundler": "3.3.3",
-    "@remotion/cli": "3.3.3",
-    "@remotion/core": "3.3.3",
-    "@remotion/motion": "3.3.3",
-    "@remotion/player": "3.3.3",
-    "@remotion/renderer": "3.3.3",
     "@supabase/supabase-js": "^2.39.3",
     "autoprefixer": "^10.4.16",
     "axios": "^1.6.7",
@@ -95,11 +89,5 @@
   },
   "engines": {
     "node": "18.x"
-  },
-  "resolutions": {
-    "@remotion/core": "3.3.3",
-    "@remotion/motion": "3.3.3",
-    "@remotion/player": "3.3.3",
-    "remotion": "3.3.3"
   }
 }

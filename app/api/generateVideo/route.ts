@@ -7,7 +7,7 @@ export async function POST(request: Request) {
   let jobId = '';
   
   try {
-    const { script } = await request.json();
+    const { script, voiceId } = await request.json();
     
     if (!script) {
       return NextResponse.json(
@@ -16,16 +16,24 @@ export async function POST(request: Request) {
       );
     }
     
+    // Check AWS credentials are configured
+    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+      return NextResponse.json(
+        { error: 'AWS credentials are not configured. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.' },
+        { status: 500 }
+      );
+    }
+    
     // Create a new job with a unique ID
     jobId = uuidv4();
     console.log(`Creating new video generation job with ID: ${jobId}`);
     
-    // Create the job in our persistent storage
-    await createJob(jobId, script);
+    // Create the job in our persistent storage with voice ID
+    await createJob(jobId, script, voiceId);
     
     // Start processing in the background without awaiting
     // This allows the API to return immediately with the job ID
-    processVideoGeneration(jobId, script).catch(error => {
+    processVideoGeneration(jobId, script, voiceId).catch(error => {
       console.error(`Error generating video for job ${jobId}:`, error);
       failJob(jobId, error instanceof Error ? error.message : String(error))
         .catch(err => console.error(`Failed to mark job ${jobId} as failed:`, err));
@@ -55,7 +63,7 @@ export async function POST(request: Request) {
   }
 }
 
-async function processVideoGeneration(jobId: string, script: string) {
+async function processVideoGeneration(jobId: string, script: string, voiceId?: string) {
   try {
     console.log(`Starting video generation process for job ${jobId}`);
     
@@ -69,6 +77,7 @@ async function processVideoGeneration(jobId: string, script: string) {
     const videoUrl = await renderVideoFallback({
       script,
       jobId,
+      voiceId,
       onProgress: async (progress) => {
         // Update job progress
         await updateJobProgress(jobId, progress);

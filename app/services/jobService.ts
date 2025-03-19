@@ -7,6 +7,7 @@ export interface Job {
   status: 'pending' | 'processing' | 'completed' | 'failed';
   progress: number;
   script: string;
+  voiceId?: string;
   videoUrl?: string;
   error?: string;
   createdAt: string;
@@ -68,23 +69,18 @@ function saveJobs(): void {
 /**
  * Create a new rendering job
  */
-export async function createJob(jobId: string, script: string): Promise<Job> {
-  const now = new Date().toISOString();
-  
+export async function createJob(jobId: string, script: string, voiceId?: string): Promise<Job> {
   const job: Job = {
     id: jobId,
     status: 'pending',
     progress: 0,
     script,
-    createdAt: now,
-    updatedAt: now,
+    voiceId,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   };
   
-  // Save to in-memory cache
   jobsCache.set(jobId, job);
-  console.log(`Job created: ${jobId}. Total jobs in memory: ${jobsCache.size}`);
-  
-  // Persist to storage
   saveJobs();
   
   return job;

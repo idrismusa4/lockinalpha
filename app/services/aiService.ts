@@ -129,22 +129,22 @@ function createPrompt(
 
   return `You are a knowledgeable tutor creating a lecture script for a video.
 
-**Objective:** Explain the following topic in a ${style} manner.
+Objective: Explain the following topic in a ${style} manner.
 
-**Topic Details:**
+Topic Details:
 ${topic ? `- Focus on: ${topic}` : ''}
 - Core Content: 
 ${text}
 
-**Requirements:**
+Requirements:
 - Target duration: ${duration} minutes (~${estimatedWordCount} words).
 ${formatInstructions}
 
-**Tone & Style:** ${intro}
+Tone & Style: ${intro}
 
-**Output Format:**
-- Use **#** for the title.
-- Use **##** for section breaks.
+Output Format:
+- Use # for the title.
+- Use ## for section breaks.
 - Structure logically with clear explanations.
 
 Provide a detailed script that can be used as a spoken lecture.`;
@@ -192,15 +192,15 @@ ${introduction}
 
 ${paragraphs.slice(1, 3).join('\n\n')}
 
-## Key Points
+Key Points
 
 ${paragraphs.slice(3, 3 + paragraphsToUse).join('\n\n')}
 
-## Additional Information
+Additional Information
 
 ${paragraphs.slice(3 + paragraphsToUse, 6 + paragraphsToUse).join('\n\n') || 'There are more details to explore beyond this introduction.'}
 
-## Summary
+Summary
 
 ${paragraphs.slice(6 + paragraphsToUse, 8 + paragraphsToUse).join('\n\n') || 'We\'ve covered the main ideas here. Hope this helps!'}`;
 }

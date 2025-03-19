@@ -18,7 +18,7 @@ export default function HomePage() {
             <Link href="/video">Create Video</Link>
           </Button>
           <Button asChild variant="outline" className="px-8">
-            <Link href="/upload">Upload Files</Link>
+            <Link href="/dashboard">Upload Files</Link>
           </Button>
         </div>
       </div>

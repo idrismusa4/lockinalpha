@@ -7,6 +7,12 @@ import path from 'path';
 import { storage } from '../supabase';
 import axios from 'axios';
 import { updateJobStatus, updateJobProgress } from './jobService';
+import { convertScriptToSpeech } from './awsPollyService';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+// Promisify exec for async/await usage
+const execAsync = promisify(exec);
 
 // Define paths for temporary files
 const TMP_DIR = os.tmpdir();
@@ -14,6 +20,7 @@ const TMP_DIR = os.tmpdir();
 interface VideoRenderParams {
   script: string;
   jobId: string;
+  voiceId?: string;
   onProgress?: (progress: number) => void;
 }
 
@@ -23,6 +30,7 @@ interface VideoRenderParams {
 export async function renderVideoFallback({
   script,
   jobId,
+  voiceId,
   onProgress = () => {}
 }: VideoRenderParams): Promise<string> {
   try {
@@ -38,23 +46,50 @@ export async function renderVideoFallback({
     }
     
     // Path to output video file
-    const outputFile = path.join(outputDir, `${jobId}.mp4`);
+    let outputFile = path.join(outputDir, `${jobId}.mp4`);
     const audioFile = path.join(outputDir, `${jobId}.mp3`);
+    const finalVideoFile = path.join(outputDir, `final-${jobId}.mp4`);
     
     // Update progress and ensure it's saved
-    await updateJobProgress(jobId, 20);
-    onProgress(20);
+    await updateJobProgress(jobId, 10);
+    onProgress(10);
+    
+    // Generate audio from script using AWS Polly
+    console.log('Generating speech from text using AWS Polly...');
+    try {
+      await convertScriptToSpeech(script, jobId, voiceId)
+        .then(audioPath => {
+          // Copy the audio file to the expected location if needed
+          if (audioPath !== audioFile && fs.existsSync(audioPath)) {
+            fs.copyFileSync(audioPath, audioFile);
+          }
+        });
+      
+      await updateJobProgress(jobId, 50);
+      onProgress(50);
+      
+      console.log('Audio generation completed');
+    } catch (audioError) {
+      console.error('Error generating audio:', audioError);
+      throw new Error(`Failed to generate audio: ${audioError instanceof Error ? audioError.message : String(audioError)}`);
+    }
     
     // Create a valid but simple MP4 file
     console.log('Creating video file...');
     try {
-      await createValidMp4File(outputFile, script);
+      await createSlideshowFromScript(outputFile, script, audioFile);
       await updateJobProgress(jobId, 70);
       onProgress(70);
     } catch (videoError) {
       console.error('Error creating video:', videoError);
       throw new Error(`Failed to create video: ${videoError instanceof Error ? videoError.message : String(videoError)}`);
     }
+    
+    // Skip the separate combining step since we're now creating the video with audio included
+    
+    // Update progress
+    await updateJobProgress(jobId, 80);
+    onProgress(80);
     
     // Upload the rendered video to Supabase Storage
     console.log('Uploading video to storage...');
@@ -72,6 +107,7 @@ export async function renderVideoFallback({
     try {
       if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile);
       if (fs.existsSync(audioFile)) fs.unlinkSync(audioFile);
+      if (fs.existsSync(finalVideoFile)) fs.unlinkSync(finalVideoFile);
       if (fs.existsSync(outputDir)) fs.rmdirSync(outputDir, { recursive: true });
     } catch (cleanupError) {
       console.warn('Failed to clean up temporary files:', cleanupError);
@@ -92,44 +128,112 @@ export async function renderVideoFallback({
 }
 
 /**
- * Creates a valid MP4 file for testing
- * This downloads a small sample video file from a public URL
+ * Creates a simple PNG image with text
  */
-async function createValidMp4File(outputPath: string, script: string): Promise<void> {
+async function createSimpleImage(outputPath: string, title: string): Promise<void> {
   try {
-    // URL to a small sample MP4 file (replace with an actual small, public MP4 URL)
-    const sampleVideoUrl = 'https://assets.mixkit.co/videos/preview/mixkit-rotating-planets-in-a-planetary-system-in-space-12019-small.mp4';
+    // Create a simple color image without text - avoiding font config issues
+    const ffmpegCmd = `ffmpeg -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
     
-    const response = await axios.get(sampleVideoUrl, {
-      responseType: 'arraybuffer'
-    });
+    console.log(`Creating image with command: ${ffmpegCmd}`);
+    await execAsync(ffmpegCmd);
     
-    // Write the sample video to the output path
-    fs.writeFileSync(outputPath, Buffer.from(response.data));
+    if (!fs.existsSync(outputPath)) {
+      throw new Error('Failed to create image file');
+    }
     
-    console.log('Created valid MP4 file at:', outputPath);
-    console.log('Script that would be used:', script.substring(0, 100) + '...');
+    console.log(`Created image at: ${outputPath}`);
   } catch (error) {
-    console.error('Error creating valid MP4 file:', error);
-    
-    // Fallback - create a minimal valid MP4 file
-    // This is just a placeholder that will work for testing
-    const minimalMp4 = Buffer.from([
-      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D, 0x00, 0x00, 0x02, 0x00,
-      0x69, 0x73, 0x6F, 0x6D, 0x69, 0x73, 0x6F, 0x32, 0x6D, 0x70, 0x34, 0x31, 0x00, 0x00, 0x00, 0x08,
-      0x6D, 0x6F, 0x6F, 0x76, 0x00, 0x00, 0x00, 0x6C, 0x6D, 0x76, 0x68, 0x64, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    ]);
-    
-    fs.writeFileSync(outputPath, minimalMp4);
-    console.log('Created minimal MP4 file at:', outputPath);
-    
-    // Don't throw - we've created a placeholder file
+    console.error('Error creating image:', error);
+    throw error;
   }
+}
+
+/**
+ * Creates a slideshow video from the script content using FFmpeg
+ */
+async function createSlideshowFromScript(outputPath: string, script: string, audioPath: string): Promise<void> {
+  // Create a temporary image for the video
+  const tmpDir = path.dirname(outputPath);
+  const imagePath = path.join(tmpDir, 'slide.png');
+  
+  try {
+    // Create a simple image file
+    await createSimpleImage(imagePath, getTitle(script));
+    
+    // Now use FFmpeg to create a video with the audio
+    console.log('Creating video with FFmpeg...');
+    
+    // First, check if the audio file exists and has content
+    if (!fs.existsSync(audioPath)) {
+      throw new Error(`Audio file does not exist at path: ${audioPath}`);
+    }
+    
+    const audioStats = fs.statSync(audioPath);
+    if (audioStats.size < 100) {
+      throw new Error(`Audio file is too small (${audioStats.size} bytes) and may be corrupted`);
+    }
+    
+    console.log(`Found valid audio file: ${audioPath} (${audioStats.size} bytes)`);
+    
+    // Calculate a default duration if we can't get it from the audio
+    let duration = 10; // default 10 seconds
+    
+    try {
+      // Get audio duration - use a simpler, more direct approach
+      const { stdout } = await execAsync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`);
+      if (stdout.trim()) {
+        duration = parseFloat(stdout.trim());
+        console.log(`Audio duration from ffprobe: ${duration} seconds`);
+      }
+    } catch (durationError) {
+      console.warn('Error getting audio duration, using default:', durationError);
+    }
+    
+    // Create video from image and audio using a simpler command
+    const ffmpegCmd = `ffmpeg -loop 1 -i "${imagePath}" -i "${audioPath}" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -shortest -pix_fmt yuv420p "${outputPath}"`;
+    
+    console.log(`Executing FFmpeg command: ${ffmpegCmd}`);
+    const { stdout, stderr } = await execAsync(ffmpegCmd);
+    
+    if (stderr) {
+      console.log('FFmpeg stderr output:', stderr);
+    }
+    
+    // Check if the output file exists and has a reasonable size
+    if (!fs.existsSync(outputPath)) {
+      throw new Error('FFmpeg did not produce an output file');
+    }
+    
+    const fileStats = fs.statSync(outputPath);
+    if (fileStats.size < 1000) { // Less than 1KB is suspicious
+      throw new Error(`Output file is too small (${fileStats.size} bytes) and may be corrupted`);
+    }
+    
+    console.log(`Successfully created video at: ${outputPath} (${fileStats.size} bytes)`);
+    
+    // Clean up the temporary image
+    if (fs.existsSync(imagePath)) {
+      fs.unlinkSync(imagePath);
+    }
+    
+  } catch (error) {
+    console.error('Error creating slideshow video:', error);
+    throw error;
+  }
+}
+
+/**
+ * Extract a title from the script
+ */
+function getTitle(script: string): string {
+  // Try to extract a title from the first line
+  const firstLine = script.split('\n')[0].trim();
+  if (firstLine.length > 0) {
+    // Remove any markdown headers
+    return firstLine.replace(/^#+\s*/, '');
+  }
+  return "LockIn Video Lecture";
 }
 
 /**

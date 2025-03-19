@@ -23,10 +23,33 @@ const nextConfig = {
         path: false,
         os: false,
         crypto: false,
+        child_process: false,
+        util: false,
+        worker_threads: false,
+        stream: false,
+        http: false,
+        https: false,
+        zlib: false,
       };
     }
 
     return config;
+  },
+  // Increase serverless function timeout for media generation
+  serverRuntimeConfig: {
+    PROJECT_ROOT: __dirname,
+  },
+  // Increase the serverless function body size limit
+  experimental: {
+    serverComponentsExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg'],
+    outputFileTracingRoot: __dirname,
+    outputFileTracingExcludes: {
+      '*': [
+        'node_modules/@swc/core-linux-x64-gnu',
+        'node_modules/@swc/core-linux-x64-musl',
+        'node_modules/@esbuild/darwin-x64',
+      ],
+    },
   },
   // Optionally increase memory limit for builds if needed
   onDemandEntries: {
@@ -39,8 +62,21 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    VERCEL: process.env.VERCEL || '0',
     GOOGLE_GEMINI_API_KEY: process.env.GOOGLE_GEMINI_API_KEY,
     GOOGLE_TTS_API_KEY: process.env.GOOGLE_TTS_API_KEY,
+  },
+  // Configure images to support remote patterns for Supabase storage
+  images: {
+    domains: ['localhost'],
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: '*.supabase.co',
+        port: '',
+        pathname: '/storage/v1/object/public/**',
+      },
+    ],
   },
 };
 

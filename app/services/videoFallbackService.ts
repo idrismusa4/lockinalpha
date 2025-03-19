@@ -5,7 +5,6 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { storage } from '../supabase';
-import axios from 'axios';
 import { updateJobStatus, updateJobProgress } from './jobService';
 import { convertScriptToSpeech } from './awsPollyService';
 import { exec } from 'child_process';
@@ -14,8 +13,13 @@ import { promisify } from 'util';
 // Promisify exec for async/await usage
 const execAsync = promisify(exec);
 
-// Define paths for temporary files
-const TMP_DIR = os.tmpdir();
+// Define paths for temporary files - use /tmp for Vercel
+const TMP_DIR = process.env.NODE_ENV === 'production' 
+  ? '/tmp' 
+  : os.tmpdir();
+
+// Flag for checking if we're in a serverless environment
+const IS_SERVERLESS = process.env.VERCEL === '1';
 
 interface VideoRenderParams {
   script: string;
@@ -48,7 +52,6 @@ export async function renderVideoFallback({
     // Path to output video file
     let outputFile = path.join(outputDir, `${jobId}.mp4`);
     const audioFile = path.join(outputDir, `${jobId}.mp3`);
-    const finalVideoFile = path.join(outputDir, `final-${jobId}.mp4`);
     
     // Update progress and ensure it's saved
     await updateJobProgress(jobId, 10);
@@ -74,56 +77,76 @@ export async function renderVideoFallback({
       throw new Error(`Failed to generate audio: ${audioError instanceof Error ? audioError.message : String(audioError)}`);
     }
     
-    // Create a valid but simple MP4 file
-    console.log('Creating video file...');
-    try {
-      await createSlideshowFromScript(outputFile, script, audioFile);
-      await updateJobProgress(jobId, 70);
-      onProgress(70);
-    } catch (videoError) {
-      console.error('Error creating video:', videoError);
-      throw new Error(`Failed to create video: ${videoError instanceof Error ? videoError.message : String(videoError)}`);
+    // In a serverless environment, we might not have FFmpeg available
+    // In that case, just use the audio file as is and set a flag for the frontend
+    let isAudioOnly = false;
+    
+    // Create a video file if not in a serverless environment or if FFmpeg is available
+    if (IS_SERVERLESS) {
+      console.log('Running in serverless environment, checking for FFmpeg...');
+      try {
+        await execAsync('ffmpeg -version');
+        console.log('FFmpeg is available in serverless environment');
+      } catch (ffmpegError) {
+        console.log('FFmpeg not available in serverless environment, using audio-only mode');
+        isAudioOnly = true;
+      }
     }
     
-    // Skip the separate combining step since we're now creating the video with audio included
+    if (!isAudioOnly) {
+      console.log('Creating video file...');
+      try {
+        await createSlideshowFromScript(outputFile, script, audioFile);
+        await updateJobProgress(jobId, 70);
+        onProgress(70);
+      } catch (videoError) {
+        console.error('Error creating video:', videoError);
+        console.log('Falling back to audio-only mode');
+        isAudioOnly = true;
+      }
+    }
+    
+    // If we're in audio-only mode, use the audio file instead
+    const fileToUpload = isAudioOnly ? audioFile : outputFile;
+    const contentType = isAudioOnly ? 'audio/mpeg' : 'video/mp4';
+    const fileExtension = isAudioOnly ? '.mp3' : '.mp4';
     
     // Update progress
     await updateJobProgress(jobId, 80);
     onProgress(80);
     
-    // Upload the rendered video to Supabase Storage
-    console.log('Uploading video to storage...');
-    let videoUrl;
+    // Upload the rendered file to Supabase Storage
+    console.log(`Uploading ${isAudioOnly ? 'audio' : 'video'} to storage...`);
+    let mediaUrl;
     try {
-      videoUrl = await uploadVideoToSupabase(outputFile, jobId);
+      mediaUrl = await uploadToSupabase(fileToUpload, jobId, fileExtension, contentType, isAudioOnly);
       await updateJobProgress(jobId, 100);
       onProgress(100);
     } catch (uploadError) {
-      console.error('Error uploading video:', uploadError);
-      throw new Error(`Failed to upload video: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
+      console.error('Error uploading media:', uploadError);
+      throw new Error(`Failed to upload media: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
     }
     
     // Clean up temporary files
     try {
       if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile);
       if (fs.existsSync(audioFile)) fs.unlinkSync(audioFile);
-      if (fs.existsSync(finalVideoFile)) fs.unlinkSync(finalVideoFile);
       if (fs.existsSync(outputDir)) fs.rmdirSync(outputDir, { recursive: true });
     } catch (cleanupError) {
       console.warn('Failed to clean up temporary files:', cleanupError);
       // Don't fail the process for cleanup errors
     }
     
-    console.log(`Video generation completed for job: ${jobId}`);
-    return videoUrl;
+    console.log(`Media generation completed for job: ${jobId}`);
+    return mediaUrl;
   } catch (error) {
-    console.error('Error rendering video fallback:', error);
+    console.error('Error rendering media:', error);
     // Make sure to update job status to failed
     await updateJobStatus(jobId, { 
       status: 'failed',
-      error: `Video generation failed: ${error instanceof Error ? error.message : String(error)}`
+      error: `Media generation failed: ${error instanceof Error ? error.message : String(error)}`
     });
-    throw new Error(`Failed to render video: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Failed to render media: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -176,21 +199,7 @@ async function createSlideshowFromScript(outputPath: string, script: string, aud
     
     console.log(`Found valid audio file: ${audioPath} (${audioStats.size} bytes)`);
     
-    // Calculate a default duration if we can't get it from the audio
-    let duration = 10; // default 10 seconds
-    
-    try {
-      // Get audio duration - use a simpler, more direct approach
-      const { stdout } = await execAsync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`);
-      if (stdout.trim()) {
-        duration = parseFloat(stdout.trim());
-        console.log(`Audio duration from ffprobe: ${duration} seconds`);
-      }
-    } catch (durationError) {
-      console.warn('Error getting audio duration, using default:', durationError);
-    }
-    
-    // Create video from image and audio using a simpler command
+    // Use a simpler FFmpeg command for better compatibility
     const ffmpegCmd = `ffmpeg -loop 1 -i "${imagePath}" -i "${audioPath}" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -shortest -pix_fmt yuv420p "${outputPath}"`;
     
     console.log(`Executing FFmpeg command: ${ffmpegCmd}`);
@@ -237,34 +246,41 @@ function getTitle(script: string): string {
 }
 
 /**
- * Uploads a rendered video file to Supabase Storage
+ * Uploads a file to Supabase Storage
  */
-async function uploadVideoToSupabase(filePath: string, jobId: string): Promise<string> {
+async function uploadToSupabase(
+  filePath: string, 
+  jobId: string, 
+  fileExtension: string = '.mp4',
+  contentType: string = 'video/mp4',
+  isAudioOnly: boolean = false
+): Promise<string> {
   try {
-    const fileName = `${jobId}.mp4`;
+    const bucketName = isAudioOnly ? 'audios' : 'videos';
+    const fileName = `${jobId}${fileExtension}`;
     
     // Check if file exists
     if (!fs.existsSync(filePath)) {
-      throw new Error(`Video file not found at path: ${filePath}`);
+      throw new Error(`File not found at path: ${filePath}`);
     }
     
     const fileBuffer = fs.readFileSync(filePath);
     if (fileBuffer.length < 100) {
-      throw new Error(`Video file is too small (${fileBuffer.length} bytes) and may be corrupted`);
+      throw new Error(`File is too small (${fileBuffer.length} bytes) and may be corrupted`);
     }
     
-    console.log(`Uploading video to Supabase: ${fileName}, size: ${fileBuffer.length} bytes`);
+    console.log(`Uploading to Supabase: ${fileName}, size: ${fileBuffer.length} bytes`);
     
     // Check if storage is initialized
     if (!storage) {
       throw new Error('Supabase storage is not initialized');
     }
     
-    // Upload the file to the pre-created 'videos' bucket
+    // Upload the file to the appropriate bucket
     const { error: uploadError } = await storage
-      .from('videos')
+      .from(bucketName)
       .upload(fileName, fileBuffer, {
-        contentType: 'video/mp4',
+        contentType: contentType,
         cacheControl: '3600',
         upsert: true
       });
@@ -276,17 +292,17 @@ async function uploadVideoToSupabase(filePath: string, jobId: string): Promise<s
     
     // Get the public URL
     const { data: urlData } = storage
-      .from('videos')
+      .from(bucketName)
       .getPublicUrl(fileName);
       
     if (!urlData || !urlData.publicUrl) {
-      throw new Error('Failed to get public URL for the uploaded video');
+      throw new Error(`Failed to get public URL for the uploaded ${isAudioOnly ? 'audio' : 'video'}`);
     }
     
-    console.log(`Video uploaded successfully, public URL: ${urlData.publicUrl}`);
+    console.log(`${isAudioOnly ? 'Audio' : 'Video'} uploaded successfully, public URL: ${urlData.publicUrl}`);
     return urlData.publicUrl;
   } catch (error) {
-    console.error('Error uploading video to Supabase:', error);
+    console.error(`Error uploading ${isAudioOnly ? 'audio' : 'video'} to Supabase:`, error);
     throw error; // Let the caller handle this error
   }
 } 

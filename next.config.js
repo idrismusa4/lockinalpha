@@ -30,7 +30,11 @@ const nextConfig = {
         http: false,
         https: false,
         zlib: false,
+        canvas: false,
       };
+      
+      // Ignore pdf.js-extract on the client-side
+      config.resolve.alias['pdf.js-extract'] = false;
     }
 
     return config;
@@ -41,7 +45,7 @@ const nextConfig = {
   },
   // External packages for serverless environment
   experimental: {
-    serverComponentsExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg'],
+    serverComponentsExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg', 'pdf.js-extract'],
   },
   // Optionally increase memory limit for builds if needed
   onDemandEntries: {

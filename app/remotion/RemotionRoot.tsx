@@ -1,5 +1,5 @@
 import React from 'react';
-import { Composition } from 'remotion';
+import { Composition } from '@remotion/core';
 import { VideoLecture } from './VideoLecture';
 
 // Define the props interface matching what VideoLecture expects
@@ -13,14 +13,13 @@ export const RemotionRoot: React.FC = () => {
     <Composition
       id="VideoLecture"
       component={VideoLecture}
-      durationInFrames={300}
+      durationInFrames={1200}
       fps={30}
       width={1920}
       height={1080}
       defaultProps={{
-        title: "Sample Lecture",
-        content: "This is a sample lecture content.",
-        audioUrl: "https://example.com/audio.mp3"
+        script: "# Sample Lecture\n\nThis is a placeholder script for the video lecture.",
+        audioUrl: ""
       }}
     />
   );

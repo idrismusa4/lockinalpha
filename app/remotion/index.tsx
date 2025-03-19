@@ -1,7 +1,7 @@
-import { Composition } from 'remotion';
+import { Composition } from '@remotion/core';
 import { VideoLecture } from './VideoLecture';
 import React from 'react';
-import { registerRoot } from 'remotion';
+import { registerRoot } from '@remotion/core';
 import { RemotionRoot } from './RemotionRoot';
 
 // Define the props interface matching what VideoLecture expects

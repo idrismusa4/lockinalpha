@@ -2,6 +2,14 @@
 
 import { useState, useRef, useEffect } from "react";
 import axios from "axios";
+import { VOICE_OPTIONS, DEFAULT_VOICE_ID } from '@/app/services/voiceOptions';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertCircle, Volume2 } from "lucide-react";
 
 interface VideoGeneratorProps {
   script: string;
@@ -13,15 +21,67 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [selectedVoice, setSelectedVoice] = useState(DEFAULT_VOICE_ID);
+  const [previewAudio, setPreviewAudio] = useState<string | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const [statusCheckAttempts, setStatusCheckAttempts] = useState(0);
-  const maxStatusCheckAttempts = 20; // Maximum number of failed status checks before giving up
+  const maxStatusCheckAttempts = 20;
   const statusCheckRef = useRef<NodeJS.Timeout | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   
   // Cleanup function to clear any active timeouts
   const cleanup = () => {
     if (statusCheckRef.current) {
       clearTimeout(statusCheckRef.current);
       statusCheckRef.current = null;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+  };
+  
+  const handlePreviewVoice = async () => {
+    if (!script) return;
+    
+    try {
+      setIsPreviewing(true);
+      setError(null);
+      
+      // Get a short preview of the script (first 100 characters)
+      const previewText = script.slice(0, 100) + "...";
+      
+      const response = await axios.post("/api/previewVoice", {
+        text: previewText,
+        voiceId: selectedVoice
+      });
+      
+      if (response.data.audioUrl) {
+        setPreviewAudio(response.data.audioUrl);
+        
+        // Stop any existing preview
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+        
+        // Create new audio element
+        const audio = new Audio(response.data.audioUrl);
+        audioRef.current = audio;
+        
+        // Play the preview
+        audio.play();
+        
+        // Clean up when done
+        audio.onended = () => {
+          setIsPreviewing(false);
+          setPreviewAudio(null);
+          audioRef.current = null;
+        };
+      }
+    } catch (err) {
+      console.error("Error previewing voice:", err);
+      setError("Failed to preview voice. Please try again.");
+      setIsPreviewing(false);
     }
   };
   
@@ -37,9 +97,10 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
     try {
       console.log("Starting video generation process...");
       
-      // Start video generation
+      // Start video generation with the selected voice
       const generateResponse = await axios.post("/api/generateVideo", {
         script,
+        voiceId: selectedVoice
       });
       
       const newJobId = generateResponse.data.jobId;
@@ -156,67 +217,98 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
   }, []);
   
   return (
-    <div className="w-full max-w-md mx-auto p-4 bg-white rounded-lg shadow-md">
-      <h2 className="text-xl font-bold mb-4">Generate Video Lecture</h2>
-      
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Lecture Script
-        </label>
-        <div className="p-3 bg-gray-50 rounded-md max-h-48 overflow-y-auto">
-          <p className="text-sm whitespace-pre-wrap">{script}</p>
-        </div>
-      </div>
-      
-      {loading && (
-        <div className="mb-4">
-          <div className="w-full bg-gray-200 rounded-full h-2.5">
-            <div 
-              className="bg-purple-600 h-2.5 rounded-full" 
-              style={{ width: `${progress}%` }}
-            ></div>
+    <Card>
+      <CardHeader>
+        <CardTitle>Generate Video Lecture</CardTitle>
+        <CardDescription>
+          Convert your script into a professional video lecture
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="script">Lecture Script</Label>
+          <div className="p-3 bg-muted rounded-md max-h-48 overflow-y-auto">
+            <p className="text-sm whitespace-pre-wrap">{script}</p>
           </div>
-          <p className="text-sm text-gray-600 mt-1">
-            Generating video: {progress}%
-          </p>
-          <p className="text-sm text-gray-500 mt-1">
-            This may take several minutes depending on the length of the script.
-          </p>
-          {jobId && (
-            <p className="text-xs text-gray-400 mt-1">
-              Job ID: {jobId}
-            </p>
-          )}
-          {statusCheckAttempts > 0 && (
-            <p className="text-xs text-amber-600 mt-1">
-              Status check retry attempts: {statusCheckAttempts}/{maxStatusCheckAttempts}
-            </p>
-          )}
         </div>
-      )}
-      
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-md">
-          <p className="font-medium mb-2">Error</p>
-          <p className="text-sm">{error}</p>
-          <button
-            onClick={handleRetry}
-            className="mt-2 px-3 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-md hover:bg-red-200"
-          >
-            Retry
-          </button>
+        
+        <div className="space-y-2">
+          <Label htmlFor="voice">Narrator Voice</Label>
+          <div className="flex gap-2">
+            <Select 
+              value={selectedVoice} 
+              onValueChange={setSelectedVoice}
+              disabled={loading || isPreviewing}
+            >
+              <SelectTrigger id="voice" className="flex-1">
+                <SelectValue placeholder="Select a voice" />
+              </SelectTrigger>
+              <SelectContent>
+                {VOICE_OPTIONS.map((voice) => (
+                  <SelectItem key={voice.id} value={voice.id}>
+                    {voice.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handlePreviewVoice}
+              disabled={loading || isPreviewing || !script}
+            >
+              <Volume2 className={isPreviewing ? "animate-pulse" : ""} />
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Select a voice and use the speaker icon to preview how it sounds
+          </p>
         </div>
-      )}
-      
-      <button
-        onClick={handleGenerateVideo}
-        disabled={loading || !script}
-        className="w-full py-2 px-4 bg-purple-600 text-white font-semibold rounded-md
-          hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50
-          disabled:bg-gray-300 disabled:cursor-not-allowed"
-      >
-        {loading ? "Generating Video..." : "Generate Video Lecture"}
-      </button>
-    </div>
+        
+        {loading && (
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span>Generating video</span>
+              <span>{progress}%</span>
+            </div>
+            <Progress value={progress} className="w-full" />
+            <p className="text-xs text-muted-foreground">
+              This may take several minutes depending on the length of the script
+            </p>
+            {jobId && (
+              <p className="text-xs text-muted-foreground">
+                Job ID: {jobId}
+              </p>
+            )}
+          </div>
+        )}
+        
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>
+              {error}
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleRetry} 
+                className="mt-2"
+              >
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+        
+        <Button
+          onClick={handleGenerateVideo}
+          disabled={loading || !script}
+          className="w-full"
+        >
+          {loading ? "Generating Video..." : "Generate Video Lecture"}
+        </Button>
+      </CardContent>
+    </Card>
   );
 } 

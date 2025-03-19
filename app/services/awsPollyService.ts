@@ -61,8 +61,10 @@ export async function generateTtsPreview(
   
   const outputPath = path.join(tmpDir, `${previewId}.mp3`);
   
-  // Limit preview text length
-  const previewText = text.length > 300 ? text.substring(0, 300) + '...' : text;
+  // Limit preview text length to 500 characters
+  const previewText = text.length > 500 
+    ? text.substring(0, 500) + '...' 
+    : text;
   
   // Generate the audio
   await textToSpeech(previewText, outputPath, voiceId);

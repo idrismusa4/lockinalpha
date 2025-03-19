@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     }
     
     try {
-      // Generate the audio file
+      // Generate the audio file (this returns a local file path)
       const audioPath = await generateTtsPreview(text, voiceId);
       
       // Read the audio file

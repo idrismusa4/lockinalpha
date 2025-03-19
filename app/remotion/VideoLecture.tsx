@@ -1,8 +1,5 @@
 import React from 'react';
-import { AbsoluteFill, Sequence } from 'remotion';
-import { useCurrentFrame, useVideoConfig } from '@remotion/core';
-import { spring } from '@remotion/core';
-import { Audio } from 'remotion';
+import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig, spring, Audio } from 'remotion';
 import { VideoLectureProps } from './index';
 
 // Component to display text with animation

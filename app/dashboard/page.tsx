@@ -5,6 +5,9 @@ import FileUpload from "../components/FileUpload";
 import ScriptGenerator from "../components/ScriptGenerator";
 import VideoGenerator from "../components/VideoGenerator";
 import VideoPlayer from "../components/VideoPlayer";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
 
 export default function Dashboard() {
   const [documentUrl, setDocumentUrl] = useState<string | null>(null);
@@ -28,87 +31,146 @@ export default function Dashboard() {
     setVideoUrl(url);
   };
   
+  // Calculate current step (1, 2, or 3)
+  const currentStep = !documentUrl ? 1 : (!script ? 2 : (!videoUrl ? 3 : 4));
+  
+  const resetProcess = () => {
+    setDocumentUrl(null);
+    setDocumentName(null);
+    setScript(null);
+    setVideoUrl(null);
+  };
+  
   return (
-    <div className="min-h-screen bg-gray-50 py-10">
-      <div className="max-w-7xl mx-auto px-4">
-        <header className="mb-10 text-center">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">LockIn Auto Video Lecture</h1>
-          <p className="text-lg text-gray-600">
-            Upload your study materials, generate AI-powered scripts, and create engaging video lectures.
-          </p>
-        </header>
-        
-        <div className="max-w-5xl mx-auto">
-          {/* Stepper */}
-          <div className="flex justify-between mb-8">
-            <div className={`flex flex-col items-center ${documentUrl ? 'text-blue-600' : 'text-gray-400'}`}>
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${documentUrl ? 'bg-blue-100 text-blue-600' : 'bg-gray-200'}`}>
-                1
-              </div>
-              <span className="mt-2 text-sm">Upload</span>
-            </div>
-            <div className="flex-1 h-0.5 self-center bg-gray-200 mx-2" />
-            <div className={`flex flex-col items-center ${script ? 'text-green-600' : 'text-gray-400'}`}>
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${script ? 'bg-green-100 text-green-600' : 'bg-gray-200'}`}>
-                2
-              </div>
-              <span className="mt-2 text-sm">Script</span>
-            </div>
-            <div className="flex-1 h-0.5 self-center bg-gray-200 mx-2" />
-            <div className={`flex flex-col items-center ${videoUrl ? 'text-purple-600' : 'text-gray-400'}`}>
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${videoUrl ? 'bg-purple-100 text-purple-600' : 'bg-gray-200'}`}>
-                3
-              </div>
-              <span className="mt-2 text-sm">Video</span>
-            </div>
+    <div className="container py-8">
+      <h1 className="text-3xl font-bold mb-4 text-center">Document to Video Converter</h1>
+      <p className="text-muted-foreground mb-8 text-center max-w-2xl mx-auto">
+        Upload your study materials and we'll help you create engaging video lectures.
+      </p>
+      
+      {/* Progress steps */}
+      <div className="mb-8">
+        <div className="flex justify-between max-w-md mx-auto">
+          <div className={`flex flex-col items-center ${currentStep >= 1 ? "text-primary" : "text-muted-foreground"}`}>
+            <div className={`h-10 w-10 rounded-full flex items-center justify-center ${currentStep >= 1 ? "bg-primary text-primary-foreground" : "bg-muted"}`}>1</div>
+            <span className="mt-2 text-sm">Upload</span>
           </div>
-          
-          {/* Content */}
-          <div className="grid grid-cols-1 gap-6">
-            {/* Step 1: File Upload */}
-            {!documentUrl && (
-              <FileUpload onUploadComplete={handleUploadComplete} />
-            )}
-            
-            {/* Step 2: Script Generation */}
-            {documentUrl && !script && (
-              <ScriptGenerator 
-                documentUrl={documentUrl} 
-                documentName={documentName || ""} 
-                onScriptGenerated={handleScriptGenerated} 
-              />
-            )}
-            
-            {/* Step 3: Video Generation */}
-            {script && !videoUrl && (
-              <VideoGenerator 
-                script={script} 
-                onVideoGenerated={handleVideoGenerated} 
-              />
-            )}
-            
-            {/* Step 4: Video Player */}
-            {videoUrl && (
-              <VideoPlayer videoUrl={videoUrl} />
-            )}
-            
-            {/* Reset button when all steps are complete */}
-            {videoUrl && (
-              <div className="text-center mt-6">
-                <button
-                  onClick={() => {
-                    setDocumentUrl(null);
-                    setDocumentName(null);
-                    setScript(null);
-                    setVideoUrl(null);
-                  }}
-                  className="px-4 py-2 bg-gray-600 text-white font-semibold rounded-md
-                    hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50"
-                >
-                  Create Another Video
-                </button>
+          <div className={`flex flex-col items-center ${currentStep >= 2 ? "text-primary" : "text-muted-foreground"}`}>
+            <div className={`h-10 w-10 rounded-full flex items-center justify-center ${currentStep >= 2 ? "bg-primary text-primary-foreground" : "bg-muted"}`}>2</div>
+            <span className="mt-2 text-sm">Generate Script</span>
+          </div>
+          <div className={`flex flex-col items-center ${currentStep >= 3 ? "text-primary" : "text-muted-foreground"}`}>
+            <div className={`h-10 w-10 rounded-full flex items-center justify-center ${currentStep >= 3 ? "bg-primary text-primary-foreground" : "bg-muted"}`}>3</div>
+            <span className="mt-2 text-sm">Create Video</span>
+          </div>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Left Column - Input or Script */}
+        <div>
+          {!videoUrl ? (
+            <>
+              {/* Step 1: File Upload */}
+              {!documentUrl && (
+                <FileUpload onUploadComplete={handleUploadComplete} />
+              )}
+              
+              {/* Step 2: Script Generation */}
+              {documentUrl && !script && (
+                <ScriptGenerator 
+                  documentUrl={documentUrl} 
+                  documentName={documentName || ""} 
+                  onScriptGenerated={handleScriptGenerated} 
+                />
+              )}
+              
+              {/* Step 3: Video Generation */}
+              {script && !videoUrl && (
+                <VideoGenerator 
+                  script={script} 
+                  onVideoGenerated={handleVideoGenerated} 
+                />
+              )}
+            </>
+          ) : (
+            /* Script Display when video is generated */
+            <Card>
+              <CardHeader>
+                <CardTitle>Lecture Script</CardTitle>
+                <CardDescription>
+                  The script used to generate your video lecture
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[400px] rounded-md border p-4">
+                  <div className="whitespace-pre-wrap text-sm">
+                    {script}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+        
+        {/* Right Column - Output */}
+        <div>
+          {videoUrl ? (
+            <VideoPlayer videoUrl={videoUrl} />
+          ) : (
+            <div className="bg-card rounded-lg border h-[400px] flex flex-col items-center justify-center p-8 text-center space-y-4">
+              <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground">
+                  <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                  <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                </svg>
               </div>
-            )}
+              <h3 className="text-xl font-semibold">Video Preview</h3>
+              <p className="text-muted-foreground max-w-xs">
+                {currentStep === 1 
+                  ? "Upload a document to get started." 
+                  : currentStep === 2 
+                    ? "Generate a script from your document." 
+                    : "Create your video and it will appear here."}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Create Another Video - Full width under both columns */}
+      {videoUrl && (
+        <div className="mt-10 py-6 border-t border-border">
+          <div className="max-w-lg mx-auto text-center">
+            <h3 className="text-xl font-semibold mb-2">Create Another Video</h3>
+            <p className="text-muted-foreground mb-4">
+              Start the process again with a new document.
+            </p>
+            <Button 
+              onClick={resetProcess}
+              className="px-6"
+              size="lg"
+            >
+              Start New Video
+            </Button>
+          </div>
+        </div>
+      )}
+      
+      <div className="mt-16">
+        <h2 className="text-2xl font-semibold mb-6 text-center">How It Works</h2>
+        <div className="grid gap-6 md:grid-cols-3">
+          <div className="bg-card p-6 rounded-lg border">
+            <div className="font-bold text-xl mb-2">1. Upload Document</div>
+            <p className="text-muted-foreground">Upload your study materials (PDF, DOCX, or TXT) and we'll analyze the content.</p>
+          </div>
+          <div className="bg-card p-6 rounded-lg border">
+            <div className="font-bold text-xl mb-2">2. Generate Script</div>
+            <p className="text-muted-foreground">Our AI will create an engaging script based on your document's content.</p>
+          </div>
+          <div className="bg-card p-6 rounded-lg border">
+            <div className="font-bold text-xl mb-2">3. Create Video</div>
+            <p className="text-muted-foreground">Choose a voice and we'll generate a professional video lecture you can download and share.</p>
           </div>
         </div>
       </div>

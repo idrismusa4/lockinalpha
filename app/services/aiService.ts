@@ -143,8 +143,8 @@ ${formatInstructions}
 Tone & Style: ${intro}
 
 Output Format:
-- Use # for the title.
-- Use ## for section breaks.
+- Use Caps for the title.
+- Use -- for section breaks.
 - Structure logically with clear explanations.
 
 Provide a detailed script that can be used as a spoken lecture.`;

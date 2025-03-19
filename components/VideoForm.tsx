@@ -22,6 +22,7 @@ export default function VideoForm() {
   const [progress, setProgress] = useState(0);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState(DEFAULT_VOICE_ID);
   const audioRef = useRef<HTMLAudioElement>(null);
   const { toast } = useToast();
@@ -65,6 +66,26 @@ export default function VideoForm() {
 
     checkStatus();
   }, [jobId, videoUrl, toast]);
+
+  // Add event listeners for audio playback
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
+    const handleEnded = () => setIsPlaying(false);
+
+    audio.addEventListener('play', handlePlay);
+    audio.addEventListener('pause', handlePause);
+    audio.addEventListener('ended', handleEnded);
+
+    return () => {
+      audio.removeEventListener('play', handlePlay);
+      audio.removeEventListener('pause', handlePause);
+      audio.removeEventListener('ended', handleEnded);
+    };
+  }, [audioPreviewUrl]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,6 +140,23 @@ export default function VideoForm() {
   };
 
   const handlePreviewVoice = async () => {
+    // If we already have audio and the button is clicked, toggle play/pause
+    if (audioPreviewUrl && audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.pause();
+      } else {
+        audioRef.current.play().catch(error => {
+          console.error('Error playing audio:', error);
+          toast({
+            title: "Audio playback failed",
+            description: "There was an issue playing the audio. Please try again.",
+            variant: "destructive",
+          });
+        });
+      }
+      return;
+    }
+
     if (!script.trim()) {
       toast({
         title: "Empty script",
@@ -129,7 +167,6 @@ export default function VideoForm() {
     }
 
     setPreviewLoading(true);
-    setAudioPreviewUrl(null);
     
     try {
       const response = await fetch('/api/previewTts', {
@@ -138,7 +175,7 @@ export default function VideoForm() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ 
-          text: script.substring(0, 200), // Just use the first 200 chars for preview
+          text: script.substring(0, 500), // Use the first 500 chars for preview
           voiceId: selectedVoice
         }),
       });
@@ -149,17 +186,34 @@ export default function VideoForm() {
       }
 
       const data = await response.json();
-      setAudioPreviewUrl(data.audioUrl);
       
-      // Play the audio
+      // Create hidden audio element if it doesn't exist
+      if (!audioRef.current) {
+        const audio = document.createElement('audio');
+        audio.style.display = 'none';
+        document.body.appendChild(audio);
+        audioRef.current = audio;
+      }
+      
+      // Update audio source and play
       if (audioRef.current) {
+        setAudioPreviewUrl(data.audioUrl);
+        audioRef.current.src = data.audioUrl;
+        
+        // Wait for the audio to be loaded before playing
+        audioRef.current.onloadeddata = () => {
+          audioRef.current?.play().catch(playError => {
+            console.error('Error playing audio:', playError);
+          });
+          setIsPlaying(true);
+        };
+        
         audioRef.current.load();
-        audioRef.current.play();
       }
       
       toast({
         title: "Voice preview ready",
-        description: "Listen to how your selected voice sounds.",
+        description: "Previewing selected voice now.",
       });
     } catch (error) {
       console.error('Error generating voice preview:', error);
@@ -171,6 +225,15 @@ export default function VideoForm() {
     } finally {
       setPreviewLoading(false);
     }
+  };
+
+  // Get button text based on audio state
+  const getPreviewButtonText = () => {
+    if (previewLoading) return 'Loading...';
+    if (audioPreviewUrl) {
+      return isPlaying ? 'Pause' : 'Play';
+    }
+    return 'Preview Voice';
   };
 
   return (
@@ -217,17 +280,10 @@ export default function VideoForm() {
               onClick={handlePreviewVoice}
               disabled={previewLoading || loading}
             >
-              {previewLoading ? 'Loading...' : 'Preview Voice'}
+              {getPreviewButtonText()}
             </Button>
           </div>
-          {audioPreviewUrl && (
-            <div className="mt-2">
-              <audio ref={audioRef} controls className="w-full">
-                <source src={audioPreviewUrl} type="audio/mpeg" />
-                Your browser does not support the audio element.
-              </audio>
-            </div>
-          )}
+          {/* Hidden audio element - we'll create it dynamically */}
         </div>
         
         {loading && (

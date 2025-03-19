@@ -1,5 +1,6 @@
 import React from 'react';
-import { AbsoluteFill, Sequence, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig } from 'remotion';
+import { spring } from '@remotion/motion';
 import { Audio } from '@remotion/player';
 import { Markdown } from '@remotion/markdown';
 import { VideoLectureProps } from './index';

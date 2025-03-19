@@ -39,17 +39,9 @@ const nextConfig = {
   serverRuntimeConfig: {
     PROJECT_ROOT: __dirname,
   },
-  // Increase the serverless function body size limit
+  // External packages for serverless environment
   experimental: {
     serverComponentsExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg'],
-    outputFileTracingRoot: __dirname,
-    outputFileTracingExcludes: {
-      '*': [
-        'node_modules/@swc/core-linux-x64-gnu',
-        'node_modules/@swc/core-linux-x64-musl',
-        'node_modules/@esbuild/darwin-x64',
-      ],
-    },
   },
   // Optionally increase memory limit for builds if needed
   onDemandEntries: {
@@ -78,6 +70,8 @@ const nextConfig = {
       },
     ],
   },
+  // Set output directory for deployed build
+  distDir: '.next',
 };
 
 module.exports = nextConfig; 

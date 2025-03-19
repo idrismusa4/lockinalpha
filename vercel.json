@@ -28,6 +28,5 @@
         "hostname": "*.supabase.co"
       }
     ]
-  },
-  "nodeVersion": "18.x"
+  }
 } 

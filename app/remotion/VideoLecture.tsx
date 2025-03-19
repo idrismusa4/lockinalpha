@@ -1,8 +1,7 @@
-import { AbsoluteFill, Sequence, Series } from 'remotion';
-import { useVideoConfig, useCurrentFrame } from '@remotion/core';
-import { Audio } from '@remotion/player';
-import { spring } from '@remotion/motion';
 import React from 'react';
+import { AbsoluteFill, Sequence, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { Audio } from '@remotion/player';
+import { Markdown } from '@remotion/markdown';
 import { VideoLectureProps } from './index';
 
 // Component to display text with animation
@@ -223,33 +222,33 @@ export const VideoLecture: React.FC<VideoLectureProps> = ({ script, audioUrl }) 
         <Audio src={audioUrl} />
       )}
       
-      <Series>
+      <Sequence>
         {/* Start with logo */}
-        <Series.Sequence durationInFrames={logoFrames}>
+        <Sequence durationInFrames={logoFrames}>
           <LogoSlide />
-        </Series.Sequence>
+        </Sequence>
         
         {/* Title slide */}
-        <Series.Sequence durationInFrames={titleFrames}>
+        <Sequence durationInFrames={titleFrames}>
           <TitleSlide title={title} />
-        </Series.Sequence>
+        </Sequence>
         
         {/* Content slides */}
         {scriptChunks.map((chunk, index) => (
-          <Series.Sequence key={index} durationInFrames={150}>
+          <Sequence key={index} durationInFrames={150}>
             <TextSlide 
               text={chunk} 
               index={index} 
               audioStart={logoFrames + titleFrames + (index * 150)} 
             />
-          </Series.Sequence>
+          </Sequence>
         ))}
         
         {/* End with logo */}
-        <Series.Sequence durationInFrames={endLogoFrames}>
+        <Sequence durationInFrames={endLogoFrames}>
           <LogoSlide />
-        </Series.Sequence>
-      </Series>
+        </Sequence>
+      </Sequence>
     </AbsoluteFill>
   );
 }; 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Composition } from '@remotion/core';
+import { Composition } from 'remotion';
 import { VideoLecture } from './VideoLecture';
 
 // Define the props interface matching what VideoLecture expects

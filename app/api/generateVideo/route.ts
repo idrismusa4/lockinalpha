@@ -102,7 +102,7 @@ async function processVideoGeneration(jobId: string, script: string, voiceId?: s
       script,
       jobId,
       voiceId,
-      onProgress: async (progress) => {
+      onProgress: async (progress: number) => {
         // Update job progress
         await updateJobProgress(jobId, progress);
       }

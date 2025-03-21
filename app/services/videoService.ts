@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { storage } from '../supabase';
+import { DEFAULT_VOICE_ID } from './voiceOptions';
 
 // Define paths for temporary files
 const TMP_DIR = os.tmpdir();
@@ -12,12 +13,14 @@ const TMP_DIR = os.tmpdir();
 interface VideoRenderParams {
   script: string;
   jobId: string;
+  voiceId?: string;
   onProgress?: (progress: number) => void;
 }
 
 export async function renderVideoWithRemotion({
   script,
   jobId,
+  voiceId = DEFAULT_VOICE_ID,
   onProgress = () => {}
 }: VideoRenderParams): Promise<string> {
   try {
@@ -53,6 +56,7 @@ export async function renderVideoWithRemotion({
         id: 'VideoLecture',
         inputProps: {
           script,
+          voiceId,
         },
       });
       
@@ -79,7 +83,7 @@ export async function renderVideoWithRemotion({
       // FALLBACK: Create a simple placeholder video file
       // In a real implementation, you would use a different video generation method
       // For demo purposes, we'll just create a very simple file
-      createPlaceholderVideoFile(outputFile, script);
+      createPlaceholderVideoFile(outputFile, script, voiceId);
       
       onProgress(90);
     }
@@ -108,17 +112,19 @@ export async function renderVideoWithRemotion({
  * Creates a simple placeholder video file for demonstration purposes
  * In a real application, you would use a more robust video generation method
  */
-function createPlaceholderVideoFile(outputPath: string, script: string): void {
+function createPlaceholderVideoFile(outputPath: string, script: string, voiceId: string = DEFAULT_VOICE_ID): void {
   // This is just a placeholder function - in a real implementation you would:
   // 1. Use ffmpeg or another library to generate a video
   // 2. Write the script text as frames in the video
   // 3. Add some basic animations
+  // 4. Use the voiceId to generate the appropriate voice narration
   
   // For now, just create an empty file to demonstrate the flow
   fs.writeFileSync(outputPath, Buffer.from([0, 0, 0, 32, 102, 116, 121, 112, 109, 112, 52, 50]));
   
   console.log('Created placeholder video file at:', outputPath);
   console.log('Script that would be used:', script.substring(0, 100) + '...');
+  console.log('Voice that would be used:', voiceId);
 }
 
 /**

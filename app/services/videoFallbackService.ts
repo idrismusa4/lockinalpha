@@ -29,7 +29,8 @@ interface VideoRenderParams {
 }
 
 /**
- * A fallback video rendering service that creates a simple MP4 file
+ * A fallback video rendering service that creates a video using
+ * enhanced visual elements, animations and the LockIn branding
  */
 export async function renderVideoFallback({
   script,
@@ -42,6 +43,7 @@ export async function renderVideoFallback({
     
     // Update job status to processing immediately
     await updateJobStatus(jobId, { status: 'processing', progress: 5 });
+    onProgress(5);
     
     // Create temporary directory for outputs
     const outputDir = path.join(TMP_DIR, `remotion-${jobId}`);
@@ -50,7 +52,7 @@ export async function renderVideoFallback({
     }
     
     // Path to output video file
-    let outputFile = path.join(outputDir, `${jobId}.mp4`);
+    const outputFile = path.join(outputDir, `${jobId}.mp4`);
     const audioFile = path.join(outputDir, `${jobId}.mp3`);
     
     // Update progress and ensure it's saved
@@ -68,8 +70,8 @@ export async function renderVideoFallback({
           }
         });
       
-      await updateJobProgress(jobId, 50);
-      onProgress(50);
+      await updateJobProgress(jobId, 30);
+      onProgress(30);
       
       console.log('Audio generation completed');
     } catch (audioError) {
@@ -78,48 +80,91 @@ export async function renderVideoFallback({
     }
     
     // In a serverless environment, we might not have FFmpeg available
-    // In that case, just use the audio file as is and set a flag for the frontend
+    // But we'll still try to create a video using Remotion
     let isAudioOnly = false;
     
-    // Create a video file if not in a serverless environment or if FFmpeg is available
-    if (IS_SERVERLESS) {
-      console.log('Running in serverless environment, checking for FFmpeg...');
-      try {
-        await execAsync('ffmpeg -version');
-        console.log('FFmpeg is available in serverless environment');
-      } catch (ffmpegError) {
-        console.log('FFmpeg not available in serverless environment, using audio-only mode');
-        isAudioOnly = true;
+    // ALWAYS attempt to create a video file, even if FFmpeg isn't available
+    // We'll use our Remotion renderer which doesn't require FFmpeg
+    console.log('Creating enhanced video with animations...');
+    try {
+      // First try to use the Remotion renderer
+      console.log('Attempting to render with Remotion...');
+      await updateJobProgress(jobId, 40);
+      onProgress(40);
+      
+      const useRemotionRenderer = await tryRemotionRender(outputFile, script, audioFile);
+      
+      if (!useRemotionRenderer) {
+        // Fallback to simple slideshow if Remotion fails
+        console.log('Remotion rendering failed, falling back to slideshow generation...');
+        await updateJobProgress(jobId, 50);
+        onProgress(50);
+        
+        // Creating slides phase
+        console.log('Generating slides for fallback video...');
+        await createEnhancedSlideshowFromScript(outputFile, script, audioFile);
+        
+        // Update progress after slideshow creation
+        await updateJobProgress(jobId, 60);
+        onProgress(60);
       }
-    }
-    
-    if (!isAudioOnly) {
-      console.log('Creating video file...');
-      try {
-        await createSlideshowFromScript(outputFile, script, audioFile);
-        await updateJobProgress(jobId, 70);
-        onProgress(70);
-      } catch (videoError) {
-        console.error('Error creating video:', videoError);
-        console.log('Falling back to audio-only mode');
-        isAudioOnly = true;
+      
+      // After either method, verify the video file exists and has sufficient size
+      if (fs.existsSync(outputFile)) {
+        const videoStats = fs.statSync(outputFile);
+        console.log(`Video file exists with size: ${videoStats.size} bytes`);
+        
+        if (videoStats.size < 10000) { // Less than 10KB is suspicious for a video
+          console.log('Video file is too small, may be corrupted. Creating a new one.');
+          await createEnhancedSlideshowFromScript(outputFile, script, audioFile);
+        }
+      } else {
+        console.log('Video file was not created, creating a new one.');
+        await createEnhancedSlideshowFromScript(outputFile, script, audioFile);
       }
+      
+      // Final check - if all video generation methods failed, we'll fall back to audio only
+      if (!fs.existsSync(outputFile) || fs.statSync(outputFile).size < 10000) {
+        console.log('All video generation methods failed, falling back to audio only.');
+        isAudioOnly = true;
+      } else {
+        console.log('Successfully created video file with size:', fs.statSync(outputFile).size, 'bytes');
+        isAudioOnly = false;
+      }
+      
+      await updateJobProgress(jobId, 70);
+      onProgress(70);
+    } catch (videoError) {
+      console.error('Error creating video:', videoError);
+      console.log('Falling back to audio-only mode');
+      isAudioOnly = true;
+      await updateJobProgress(jobId, 70);
+      onProgress(70);
     }
     
     // If we're in audio-only mode, use the audio file instead
     const fileToUpload = isAudioOnly ? audioFile : outputFile;
     const contentType = isAudioOnly ? 'audio/mpeg' : 'video/mp4';
     const fileExtension = isAudioOnly ? '.mp3' : '.mp4';
+    const bucketName = isAudioOnly ? 'audios' : 'videos'; // Use the correct bucket
     
     // Update progress
     await updateJobProgress(jobId, 80);
     onProgress(80);
     
     // Upload the rendered file to Supabase Storage
-    console.log(`Uploading ${isAudioOnly ? 'audio' : 'video'} to storage...`);
+    console.log(`Uploading ${isAudioOnly ? 'audio' : 'video'} to storage in ${bucketName} bucket...`);
     let mediaUrl;
     try {
-      mediaUrl = await uploadToSupabase(fileToUpload, jobId, fileExtension, contentType, isAudioOnly);
+      // Use the correct bucket name and file extension
+      mediaUrl = await uploadToSupabase(fileToUpload, jobId, fileExtension, contentType, isAudioOnly, bucketName);
+      
+      // Verify the URL is valid
+      if (!mediaUrl || !mediaUrl.startsWith('http')) {
+        throw new Error(`Invalid media URL returned: ${mediaUrl}`);
+      }
+      
+      console.log(`Media URL: ${mediaUrl}`);
       await updateJobProgress(jobId, 100);
       onProgress(100);
     } catch (uploadError) {
@@ -132,6 +177,7 @@ export async function renderVideoFallback({
       if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile);
       if (fs.existsSync(audioFile)) fs.unlinkSync(audioFile);
       if (fs.existsSync(outputDir)) fs.rmdirSync(outputDir, { recursive: true });
+      console.log('Cleaned up temporary files');
     } catch (cleanupError) {
       console.warn('Failed to clean up temporary files:', cleanupError);
       // Don't fail the process for cleanup errors
@@ -151,56 +197,221 @@ export async function renderVideoFallback({
 }
 
 /**
- * Creates a simple PNG image with text
+ * Try to render the video using Remotion
  */
-async function createSimpleImage(outputPath: string, title: string): Promise<void> {
+async function tryRemotionRender(outputPath: string, script: string, audioPath: string): Promise<boolean> {
   try {
-    // Create a simple color image without text - avoiding font config issues
-    const ffmpegCmd = `ffmpeg -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
+    console.log('Attempting to render video using Remotion...');
     
-    console.log(`Creating image with command: ${ffmpegCmd}`);
-    await execAsync(ffmpegCmd);
-    
-    if (!fs.existsSync(outputPath)) {
-      throw new Error('Failed to create image file');
+    // Try to dynamically import Remotion packages
+    const RemotionBundler = await import('@remotion/bundler').catch(() => null);
+    const RemotionRenderer = await import('@remotion/renderer').catch(() => null);
+
+    if (!RemotionBundler || !RemotionRenderer) {
+      console.log('Could not import Remotion packages. Falling back to basic video creation.');
+      return false;
     }
     
-    console.log(`Created image at: ${outputPath}`);
+    const { bundle } = RemotionBundler;
+    const { renderMedia, selectComposition } = RemotionRenderer;
+    
+    // Get the absolute path to the Remotion entry point
+    const entryPoint = path.join(process.cwd(), 'app/remotion/index.tsx');
+    
+    if (!fs.existsSync(entryPoint)) {
+      console.error(`Remotion entry point not found at: ${entryPoint}`);
+      return false;
+    }
+    
+    // Verify we have the audio file
+    if (!fs.existsSync(audioPath)) {
+      console.error(`Audio file not found at: ${audioPath}`);
+      return false;
+    }
+    
+    // Create a simplified temporary copy of the audio file with a predictable name
+    // This helps resolve audio file access issues in Remotion
+    const tmpDir = path.dirname(outputPath);
+    const tmpAudioPath = path.join(tmpDir, `audio-${path.basename(audioPath)}`);
+    fs.copyFileSync(audioPath, tmpAudioPath);
+    
+    // Bundle the Remotion project
+    console.log(`Bundling Remotion project from: ${entryPoint}`);
+    const bundleLocation = await bundle({
+      entryPoint,
+      // Add webpack override to handle potential bundling issues
+      webpackOverride: (config) => {
+        return {
+          ...config,
+          resolve: {
+            ...config.resolve,
+            fallback: {
+              ...config.resolve?.fallback,
+              fs: false,
+              path: false,
+              os: false,
+            },
+          },
+        };
+      },
+    });
+    
+    // Parse script into paragraphs to calculate duration
+    const paragraphs = script.split('\n\n').filter(p => p.trim().length > 0);
+    const numSlides = Math.max(1, paragraphs.length);
+    
+    // Use our constants from the VideoLecture component
+    const logoFrames = 90; // 3 seconds
+    const titleFrames = 120; // 4 seconds
+    const slideFrames = numSlides * 300; // 10 seconds per slide
+    const endLogoFrames = 60; // 2 seconds
+    const totalFrames = logoFrames + titleFrames + slideFrames + endLogoFrames;
+    
+    // Ensure reasonable duration (between 10s and 3min)
+    const fps = 30;
+    const durationInFrames = Math.max(300, Math.min(5400, totalFrames));
+    
+    console.log(`Rendering video with ${durationInFrames} frames at ${fps} fps for ${numSlides} slides...`);
+    
+    // Select the composition to render
+    const composition = await selectComposition({
+      serveUrl: bundleLocation,
+      id: 'VideoLecture', // Our composition ID defined in index.tsx
+      inputProps: {
+        script,
+        audioUrl: tmpAudioPath, // Use the local path for audio
+      },
+    });
+    
+    // Render the video
+    await renderMedia({
+      composition,
+      serveUrl: bundleLocation,
+      codec: 'h264',
+      outputLocation: outputPath,
+      inputProps: {
+        script,
+        audioUrl: tmpAudioPath,
+      },
+      durationInFrames,
+      fps,
+      imageFormat: 'jpeg',
+      chromiumOptions: {
+        disableWebSecurity: true,
+        headless: true,
+        args: ['--disable-web-security', '--no-sandbox', '--disable-setuid-sandbox'],
+      },
+      pixelFormat: 'yuv420p', // Standard format for better compatibility
+    });
+    
+    // Clean up the temporary audio file
+    try {
+      if (fs.existsSync(tmpAudioPath)) {
+        fs.unlinkSync(tmpAudioPath);
+      }
+    } catch (cleanupErr) {
+      console.warn('Failed to clean up temporary audio file:', cleanupErr);
+    }
+    
+    // Check if the file was created
+    if (fs.existsSync(outputPath)) {
+      const stats = fs.statSync(outputPath);
+      console.log(`Remotion successfully rendered video to: ${outputPath} (${stats.size} bytes)`);
+      if (stats.size < 10000) { // Less than 10KB is suspicious for a video
+        console.error('Remotion output file is too small, may be corrupted.');
+        return false;
+      }
+      return true;
+    } else {
+      console.error('Remotion did not produce an output file');
+      return false;
+    }
   } catch (error) {
-    console.error('Error creating image:', error);
-    throw error;
+    console.error('Error rendering with Remotion:', error);
+    return false;
   }
 }
 
 /**
- * Creates a slideshow video from the script content using FFmpeg
+ * Creates an enhanced slideshow video from script with visual elements
  */
-async function createSlideshowFromScript(outputPath: string, script: string, audioPath: string): Promise<void> {
-  // Create a temporary image for the video
+async function createEnhancedSlideshowFromScript(outputPath: string, script: string, audioPath: string): Promise<void> {
+  // Create a temporary directory for the slides
   const tmpDir = path.dirname(outputPath);
-  const imagePath = path.join(tmpDir, 'slide.png');
+  const slidesDir = path.join(tmpDir, 'slides');
+  
+  if (!fs.existsSync(slidesDir)) {
+    fs.mkdirSync(slidesDir, { recursive: true });
+  }
   
   try {
-    // Create a simple image file
-    await createSimpleImage(imagePath, getTitle(script));
+    console.log('Starting enhanced slideshow creation...');
     
-    // Now use FFmpeg to create a video with the audio
-    console.log('Creating video with FFmpeg...');
+    // Create a title screen
+    const title = script.split('\n')[0].replace(/^#+\s*/, '');
+    const titlePath = path.join(slidesDir, 'title.png');
+    await createTitleImage(titlePath, title);
     
-    // First, check if the audio file exists and has content
+    // Split script into logical chunks
+    const paragraphs = script
+      .split('\n\n')
+      .filter(p => p.trim().length > 0);
+    
+    // Create images for each paragraph
+    const slideImages = [titlePath];
+    
+    // Create each slide - reporting progress as we go
+    const totalSlides = paragraphs.length;
+    console.log(`Creating ${totalSlides} slides...`);
+    
+    for (let i = 0; i < paragraphs.length; i++) {
+      const slidePath = path.join(slidesDir, `slide-${i + 1}.png`);
+      await createSlideImage(slidePath, paragraphs[i], i + 1);
+      slideImages.push(slidePath);
+    }
+    
+    // Use FFmpeg to create a slideshow video with the audio
+    console.log('Creating improved slideshow video with FFmpeg...');
+    
+    // Check if audio file exists and has content
     if (!fs.existsSync(audioPath)) {
       throw new Error(`Audio file does not exist at path: ${audioPath}`);
     }
     
-    const audioStats = fs.statSync(audioPath);
-    if (audioStats.size < 100) {
-      throw new Error(`Audio file is too small (${audioStats.size} bytes) and may be corrupted`);
+    // Get audio duration
+    const { stdout: durationOutput } = await execAsync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`);
+    const audioDuration = parseFloat(durationOutput);
+    console.log(`Audio duration: ${audioDuration} seconds`);
+    
+    if (isNaN(audioDuration) || audioDuration <= 0) {
+      throw new Error('Invalid audio duration detected. Cannot create video.');
     }
     
-    console.log(`Found valid audio file: ${audioPath} (${audioStats.size} bytes)`);
+    // Create a file with the list of images and their durations
+    const imageListPath = path.join(tmpDir, 'images.txt');
     
-    // Use a simpler FFmpeg command for better compatibility
-    const ffmpegCmd = `ffmpeg -loop 1 -i "${imagePath}" -i "${audioPath}" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -shortest -pix_fmt yuv420p "${outputPath}"`;
+    // Calculate slide duration - ensure it's reasonable based on audio length
+    const slideCount = slideImages.length;
+    const slideDuration = Math.max(3, Math.min(10, audioDuration / slideCount));
+    
+    console.log(`Using ${slideDuration.toFixed(2)} seconds per slide for ${slideCount} slides`);
+    
+    // Create the image list with proper durations
+    const imageListContent = slideImages
+      .map((img, index) => {
+        // Last slide needs special handling
+        if (index === slideImages.length - 1) {
+          return `file '${img.replace(/'/g, "'\\''")}'\nduration ${slideDuration}`;
+        }
+        return `file '${img.replace(/'/g, "'\\''")}'\nduration ${slideDuration}`;
+      })
+      .join('\n');
+    
+    fs.writeFileSync(imageListPath, imageListContent);
+    console.log('Created image list file for FFmpeg');
+    
+    // Create a more robust FFmpeg command with explicit audio mapping
+    const ffmpegCmd = `ffmpeg -f concat -safe 0 -i "${imageListPath}" -i "${audioPath}" -map 0:v -map 1:a -vf "fps=24,format=yuv420p" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -shortest -pix_fmt yuv420p -t ${audioDuration} "${outputPath}"`;
     
     console.log(`Executing FFmpeg command: ${ffmpegCmd}`);
     const { stdout, stderr } = await execAsync(ffmpegCmd);
@@ -209,40 +420,149 @@ async function createSlideshowFromScript(outputPath: string, script: string, aud
       console.log('FFmpeg stderr output:', stderr);
     }
     
-    // Check if the output file exists and has a reasonable size
+    // Verify the output file
     if (!fs.existsSync(outputPath)) {
       throw new Error('FFmpeg did not produce an output file');
     }
     
     const fileStats = fs.statSync(outputPath);
-    if (fileStats.size < 1000) { // Less than 1KB is suspicious
+    console.log(`Video file created: ${outputPath} (${fileStats.size} bytes)`);
+    
+    if (fileStats.size < 10000) { // Less than 10KB is suspicious
       throw new Error(`Output file is too small (${fileStats.size} bytes) and may be corrupted`);
     }
     
-    console.log(`Successfully created video at: ${outputPath} (${fileStats.size} bytes)`);
+    console.log(`Successfully created enhanced slideshow video at: ${outputPath} (${fileStats.size} bytes)`);
     
-    // Clean up the temporary image
-    if (fs.existsSync(imagePath)) {
-      fs.unlinkSync(imagePath);
+    // Clean up the temporary files
+    try {
+      slideImages.forEach(img => {
+        if (fs.existsSync(img)) {
+          fs.unlinkSync(img);
+        }
+      });
+      
+      if (fs.existsSync(imageListPath)) {
+        fs.unlinkSync(imageListPath);
+      }
+      
+      if (fs.existsSync(slidesDir)) {
+        fs.rmdirSync(slidesDir, { recursive: true });
+      }
+      console.log('Cleaned up temporary files');
+    } catch (cleanupError) {
+      console.warn('Warning: Failed to clean up some temporary files:', cleanupError);
     }
     
   } catch (error) {
-    console.error('Error creating slideshow video:', error);
+    console.error('Error creating enhanced slideshow:', error);
     throw error;
   }
 }
 
 /**
- * Extract a title from the script
+ * Creates a title image with nice visual design
  */
-function getTitle(script: string): string {
-  // Try to extract a title from the first line
-  const firstLine = script.split('\n')[0].trim();
-  if (firstLine.length > 0) {
-    // Remove any markdown headers
-    return firstLine.replace(/^#+\s*/, '');
+async function createTitleImage(outputPath: string, title: string): Promise<void> {
+  try {
+    // More thorough sanitization for ffmpeg
+    const sanitizedTitle = title
+      .replace(/['"\\*:]/g, '')  // Remove problematic characters
+      .replace(/[^a-zA-Z0-9\s.,?!()-]/g, '')  // Keep only safe characters
+      .trim()
+      .substr(0, 80); // Limit length to avoid command issues
+    
+    // Skip trying to render text since fontconfig causes issues on Windows
+    // Create a visually appealing gradient background instead
+    const bgColor = '#1a2a6c';
+    const gradientColor = '#2a4a9c';
+    
+    // Create a gradient effect with boxes instead of text
+    const ffmpegCmd = `ffmpeg -f lavfi -i "color=c=${bgColor}:s=1280x720" -vf "drawbox=x=0:y=0:w=1280:h=720:color=${gradientColor}@0.5:t=fill,drawbox=x=40:y=40:w=1200:h=150:color=${bgColor}@0.7:t=fill,drawbox=x=40:y=250:w=1200:h=100:color=${bgColor}@0.9:t=fill" -frames:v 1 "${outputPath}"`;
+    
+    console.log('Executing title image command');
+    await execAsync(ffmpegCmd);
+    
+    if (!fs.existsSync(outputPath)) {
+      throw new Error('Failed to create title image');
+    }
+    
+    console.log(`Title image created successfully at: ${outputPath}`);
+  } catch (error) {
+    console.error('Error creating title image:', error);
+    
+    // Fallback method - Create a simpler image if the first method fails
+    try {
+      // Create a very simple title image with minimal commands
+      const simpleCmd = `ffmpeg -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
+      await execAsync(simpleCmd);
+      
+      if (!fs.existsSync(outputPath)) {
+        throw new Error('Failed to create even a simple title image');
+      }
+      
+      console.log(`Simple fallback title image created at: ${outputPath}`);
+    } catch (fallbackError) {
+      console.error('Even fallback title image creation failed:', fallbackError);
+      throw error; // Throw the original error
+    }
   }
-  return "LockIn Video Lecture";
+}
+
+/**
+ * Creates a slide image for a paragraph of text
+ */
+async function createSlideImage(outputPath: string, text: string, slideNumber: number): Promise<void> {
+  try {
+    // More thorough sanitization for text used in ffmpeg command
+    const sanitizedText = text
+      .substr(0, 150)  // Limit length further to avoid command issues
+      .replace(/['"\\*]/g, '')  // Remove problematic characters
+      .replace(/[\n\r:]/g, ' ')  // Replace newlines and colons with spaces
+      .replace(/[^a-zA-Z0-9\s.,?!()-]/g, '')  // Keep only safe characters
+      .trim();
+    
+    // Use different colors for different slides to add visual interest
+    const colorSchemes = [
+      { bg: '#1a2a6c', accent: '#2a3a8c' },  // Blue
+      { bg: '#2c3e50', accent: '#34495e' },  // Dark blue
+      { bg: '#27ae60', accent: '#2ecc71' },  // Green
+      { bg: '#c0392b', accent: '#e74c3c' },  // Red
+      { bg: '#8e44ad', accent: '#9b59b6' }   // Purple
+    ];
+    
+    // Select a color scheme based on slideNumber
+    const scheme = colorSchemes[slideNumber % colorSchemes.length];
+    
+    // Create a visually interesting slide with visual elements instead of text
+    const ffmpegCmd = `ffmpeg -f lavfi -i "color=c=${scheme.bg}:s=1280x720" -vf "drawbox=x=0:y=0:w=1280:h=720:color=${scheme.accent}@0.3:t=fill,drawbox=x=0:y=0:w=1280:h=100:color=${scheme.bg}@0.8:t=fill,drawbox=x=0:y=620:w=1280:h=100:color=${scheme.bg}@0.8:t=fill,drawbox=x=${(slideNumber % 4) * 250 + 100}:y=${200 + (slideNumber % 3) * 100}:w=200:h=200:color=${scheme.accent}@0.6:t=fill" -frames:v 1 "${outputPath}"`;
+    
+    await execAsync(ffmpegCmd);
+    
+    if (!fs.existsSync(outputPath)) {
+      throw new Error(`Failed to create slide image #${slideNumber}`);
+    }
+    
+    console.log(`Slide image #${slideNumber} created successfully at: ${outputPath}`);
+  } catch (error) {
+    console.error(`Error creating slide image #${slideNumber}:`, error);
+    
+    // Fallback method - Create a simpler image if the first method fails
+    try {
+      // Create a very simple slide image with minimal commands
+      const simpleCmd = `ffmpeg -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
+      await execAsync(simpleCmd);
+      
+      if (!fs.existsSync(outputPath)) {
+        throw new Error(`Failed to create even a simple slide image #${slideNumber}`);
+      }
+      
+      console.log(`Simple fallback slide image #${slideNumber} created at: ${outputPath}`);
+    } catch (fallbackError) {
+      console.error(`Even fallback slide creation failed for #${slideNumber}:`, fallbackError);
+      throw error; // Throw the original error
+    }
+  }
 }
 
 /**
@@ -253,10 +573,15 @@ async function uploadToSupabase(
   jobId: string, 
   fileExtension: string = '.mp4',
   contentType: string = 'video/mp4',
-  isAudioOnly: boolean = false
+  isAudioOnly: boolean = false,
+  bucketName: string = 'videos' // Default to videos bucket
 ): Promise<string> {
   try {
-    const bucketName = isAudioOnly ? 'audios' : 'videos';
+    // If no bucket is specified, choose based on the file type
+    if (!bucketName) {
+      bucketName = isAudioOnly ? 'audios' : 'videos';
+    }
+    
     const fileName = `${jobId}${fileExtension}`;
     
     // Check if file exists
@@ -269,26 +594,37 @@ async function uploadToSupabase(
       throw new Error(`File is too small (${fileBuffer.length} bytes) and may be corrupted`);
     }
     
-    console.log(`Uploading to Supabase: ${fileName}, size: ${fileBuffer.length} bytes`);
+    console.log(`Uploading to Supabase bucket '${bucketName}': ${fileName}, size: ${fileBuffer.length} bytes, contentType: ${contentType}`);
     
     // Check if storage is initialized
     if (!storage) {
       throw new Error('Supabase storage is not initialized');
     }
+
+    // Add explicit file metadata to help with content type detection
+    const metadata = {
+      'Content-Type': contentType,
+      'x-amz-meta-contentType': contentType,
+      'Cache-Control': 'max-age=3600, public',
+    };
     
-    // Upload the file to the appropriate bucket
-    const { error: uploadError } = await storage
+    // Upload the file to the appropriate bucket with proper content type and caching headers
+    const { error: uploadError, data: uploadData } = await storage
       .from(bucketName)
       .upload(fileName, fileBuffer, {
         contentType: contentType,
-        cacheControl: '3600',
-        upsert: true
+        cacheControl: 'max-age=3600, public',
+        upsert: true,
+        duplex: 'half',
+        metadata: metadata
       });
       
     if (uploadError) {
       console.error('Supabase upload error:', uploadError);
       throw uploadError;
     }
+    
+    console.log('Upload successful, getting public URL:', uploadData);
     
     // Get the public URL
     const { data: urlData } = storage
@@ -299,10 +635,49 @@ async function uploadToSupabase(
       throw new Error(`Failed to get public URL for the uploaded ${isAudioOnly ? 'audio' : 'video'}`);
     }
     
-    console.log(`${isAudioOnly ? 'Audio' : 'Video'} uploaded successfully, public URL: ${urlData.publicUrl}`);
-    return urlData.publicUrl;
+    // Log the public URL for debugging
+    console.log(`${isAudioOnly ? 'Audio' : 'Video'} uploaded successfully to bucket '${bucketName}'`);
+    console.log(`Public URL: ${urlData.publicUrl}`);
+    
+    // Ensure the URL is properly formatted for video playback
+    let finalUrl = urlData.publicUrl;
+    
+    // Some browsers have issues with Supabase URLs that have complex query parameters
+    // Let's clean it up to improve compatibility
+    if (finalUrl.includes('?')) {
+      // Remove any query parameters that might cause issues
+      finalUrl = finalUrl.split('?')[0];
+    }
+    
+    // Get the full, absolute URL with proper encoding
+    try {
+      const url = new URL(finalUrl);
+      finalUrl = url.toString();
+      console.log(`Final optimized URL: ${finalUrl}`);
+    } catch (urlError) {
+      console.warn(`Unable to parse URL: ${finalUrl}`, urlError);
+      // Continue with the original URL
+    }
+    
+    // Validate the URL is accessible
+    try {
+      const validateResponse = await fetch(finalUrl, { method: 'HEAD' });
+      if (!validateResponse.ok) {
+        console.warn(`Warning: Media URL returned ${validateResponse.status} status code. Media might not be accessible.`);
+      } else {
+        console.log(`Media URL validation successful: ${validateResponse.status} ${validateResponse.statusText}`);
+        // Log content type and content length headers
+        console.log('Content-Type:', validateResponse.headers.get('content-type'));
+        console.log('Content-Length:', validateResponse.headers.get('content-length'));
+      }
+    } catch (validateError) {
+      console.warn('Warning: Could not validate media URL accessibility:', validateError);
+      // Don't throw here, try to proceed anyway
+    }
+    
+    return finalUrl;
   } catch (error) {
     console.error(`Error uploading ${isAudioOnly ? 'audio' : 'video'} to Supabase:`, error);
     throw error; // Let the caller handle this error
   }
-} 
+}

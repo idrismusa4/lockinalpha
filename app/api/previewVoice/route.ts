@@ -29,12 +29,19 @@ export async function POST(request: Request) {
       // Read the audio file
       const audioBuffer = fs.readFileSync(audioPath);
       
+      if (audioBuffer.length < 100) {
+        return NextResponse.json(
+          { error: 'Generated audio file is too small or empty' },
+          { status: 500 }
+        );
+      }
+      
       // Generate a unique filename
       const filename = `preview-${Date.now()}.mp3`;
       
-      // Upload to Supabase storage
+      // Upload to Supabase storage in the 'audios' bucket
       const { error: uploadError } = await storage
-        .from('audios')
+        .from('audios') // Make sure this bucket exists in your Supabase project
         .upload(filename, audioBuffer, {
           contentType: 'audio/mpeg',
           cacheControl: '3600',
@@ -42,6 +49,7 @@ export async function POST(request: Request) {
         });
         
       if (uploadError) {
+        console.error('Error uploading audio to Supabase:', uploadError);
         throw uploadError;
       }
       
@@ -54,10 +62,17 @@ export async function POST(request: Request) {
         throw new Error('Failed to get public URL for the preview');
       }
       
-      // Clean up the temporary file
-      fs.unlinkSync(audioPath);
+      console.log(`Audio preview uploaded successfully: ${urlData.publicUrl}`);
       
-      return NextResponse.json({ audioUrl: urlData.publicUrl });
+      // Clean up the temporary file
+      if (fs.existsSync(audioPath)) {
+        fs.unlinkSync(audioPath);
+      }
+      
+      return NextResponse.json({ 
+        audioUrl: urlData.publicUrl,
+        message: 'Audio preview generated successfully'
+      });
     } catch (error) {
       console.error('Error generating preview:', error);
       return NextResponse.json(

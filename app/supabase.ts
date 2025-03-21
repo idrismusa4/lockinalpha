@@ -75,7 +75,7 @@ export const initializeSupabaseStorage = async () => {
         const { error: createVideoBucketError } = await storage.createBucket('videos', {
           public: true, 
           fileSizeLimit: 100 * 1024 * 1024, // 100MB limit
-          allowedMimeTypes: ['video/mp4']
+          allowedMimeTypes: ['video/mp4', 'audio/mpeg'] // Allow both video and audio
         });
         
         if (createVideoBucketError) {
@@ -83,18 +83,43 @@ export const initializeSupabaseStorage = async () => {
         } else {
           console.log('Created videos bucket successfully');
           
-          // Add public access policy
+          // Set CORS policy to allow all origins
           try {
-            const { error: policyError } = await storage.from('videos').createSignedUrl('policy', 31536000);
-            if (policyError) {
-              console.error('Error creating public policy for videos bucket:', policyError);
+            // Update bucket's CORS configuration
+            const { error: corsError } = await storage.updateBucket('videos', {
+              corsAllowOrigins: ['*'],
+              corsAllowMethods: ['GET', 'HEAD'],
+              corsExposeHeaders: ['Content-Length', 'Content-Type']
+            });
+            
+            if (corsError) {
+              console.error('Error setting CORS policy for videos bucket:', corsError);
+            } else {
+              console.log('Updated CORS policy for videos bucket successfully');
             }
-          } catch (policyError) {
-            console.error('Error setting public policy for videos bucket:', policyError);
+          } catch (corsError) {
+            console.error('Error updating CORS configuration for videos bucket:', corsError);
           }
         }
       } else if (videosData) {
         console.log('Videos bucket already exists');
+        
+        // Ensure CORS is configured even if bucket already exists
+        try {
+          const { error: corsError } = await storage.updateBucket('videos', {
+            corsAllowOrigins: ['*'],
+            corsAllowMethods: ['GET', 'HEAD'],
+            corsExposeHeaders: ['Content-Length', 'Content-Type']
+          });
+          
+          if (corsError) {
+            console.error('Error updating CORS policy for existing videos bucket:', corsError);
+          } else {
+            console.log('Updated CORS policy for existing videos bucket successfully');
+          }
+        } catch (corsError) {
+          console.error('Error updating CORS for existing videos bucket:', corsError);
+        }
       }
     } catch (videoError) {
       console.error('Error checking/creating videos bucket:', videoError);

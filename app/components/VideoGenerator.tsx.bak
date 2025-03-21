@@ -135,14 +135,238 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
     }
   };
   
-  // Function to check video generation status with a specific job ID
+  const handleGenerateVideo = async () => {
+    // Clear any previous state
+    setLoading(true);
+    setError(null);
+    setProgress(0);
+    setJobId(null);
+    setStatusCheckAttempts(0);
+    cleanup();
+    
+    try {
+      console.log("Starting media generation process...");
+      
+      // Start video or audio generation with the selected voice
+      const generateResponse = await axios.post("/api/generateVideo", {
+        script,
+        voiceId: selectedVoice
+      });
+      
+      const newJobId = generateResponse.data.jobId;
+      
+      if (!newJobId) {
+        throw new Error("Failed to start generation - no job ID returned");
+      }
+      
+      setJobId(newJobId);
+      console.log(`Generation job started with ID: ${newJobId}`);
+      
+      // Poll for generation status with our updated checkStatus function
+      // Since checkStatus expects jobId to be set in state, we need to wait for the state update
+      // We'll create a local version that uses the newJobId directly
+      const initialCheckStatus = async () => {
+        try {
+          // Clear the current timeout reference
+          statusCheckRef.current = null;
+          
+          console.log(`Initial status check for job: ${newJobId}...`);
+          const statusResponse = await axios.get(`/api/videoStatus?jobId=${newJobId}`);
+          
+          // Reset the status check attempts on success
+          setStatusCheckAttempts(0);
+          
+          console.log(`Got status response:`, statusResponse.data);
+          
+          if (statusResponse.data.status === "completed") {
+            // Media generation complete
+            setProgress(100);
+            
+            // Check if this is an audio file
+            const mediaUrl = statusResponse.data.videoUrl;
+            const isAudioOnly = mediaUrl.toLowerCase().endsWith('.mp3') || 
+                              mediaUrl.toLowerCase().includes('/audios/');
+            
+            if (isAudioOnly) {
+              console.log(`Audio generation completed: ${mediaUrl}`);
+            } else {
+              console.log(`Video generation completed: ${mediaUrl}`);
+            }
+            
+            // Pass the URL to the parent component regardless of whether it's audio or video
+            onVideoGenerated(mediaUrl);
+            setLoading(false);
+          } else if (statusResponse.data.status === "failed") {
+            // Generation failed
+            const errorMessage = statusResponse.data.error || "Generation failed. Please try again.";
+            console.error(`Media generation failed: ${errorMessage}`);
+            setError(errorMessage);
+            setLoading(false);
+          } else {
+            // Still processing
+            const currentProgress = statusResponse.data.progress || 0;
+            console.log(`Still processing: ${currentProgress}% complete`);
+            setProgress(currentProgress);
+            
+            // Schedule the next status check, using the regular checkStatus function
+            // By this point the jobId state should be updated
+            statusCheckRef.current = setTimeout(checkStatus, 2000);
+          }
+        } catch (err) {
+          console.error("Error checking initial status:", err);
+          
+          // Increment the number of failed attempts
+          setStatusCheckAttempts(prev => prev + 1);
+          
+          if (statusCheckAttempts < maxStatusCheckAttempts - 1) {
+            // If we haven't reached the max attempts, schedule another check
+            // with increasing backoff time
+            const backoffTime = Math.min(2000 * Math.pow(1.5, statusCheckAttempts), 10000);
+            console.log(`Retrying status check in ${backoffTime}ms (attempt ${statusCheckAttempts + 1}/${maxStatusCheckAttempts})`);
+            statusCheckRef.current = setTimeout(checkStatus, backoffTime);
+          } else {
+            // Try to provide more helpful error messages
+            if (axios.isAxiosError(err) && err.response) {
+              if (err.response.status === 404) {
+                setError(`Job not found (ID: ${newJobId}). The processing job may have been lost. Please try again.`);
+              } else {
+                setError(`Failed to check status: ${err.response.status} ${err.response.statusText}`);
+              }
+            } else {
+              setError(`Failed to check generation status: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            }
+            
+            setLoading(false);
+          }
+        }
+      };
+      
+      // Start polling after a short delay
+      statusCheckRef.current = setTimeout(initialCheckStatus, 2000);
+      
+    } catch (err) {
+      console.error("Error generating media:", err);
+      
+      // Try to provide more helpful error messages
+      if (axios.isAxiosError(err) && err.response) {
+        setError(`Generation failed: ${err.response.status} ${err.response.statusText} - ${err.response.data?.error || 'Unknown error'}`);
+      } else {
+        setError(`An error occurred during generation: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+      
+      setLoading(false);
+    }
+  };
+  
+  // Function to retry video generation
+  const handleRetry = () => {
+    // Clean up any existing timeouts
+    cleanup();
+    
+    // Just call handleGenerateVideo again
+    handleGenerateVideo();
+  };
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanup();
+    };
+  }, []);
+  
+  // Function to check the status of the media generation job
+  const checkStatus = async () => {
+    if (!jobId) {
+      console.error("No job ID available for status check");
+      return;
+    }
+
+    try {
+      // Clear the current timeout reference
+      statusCheckRef.current = null;
+      
+      // If we've exceeded the maximum number of attempts, give up
+      if (statusCheckAttempts >= maxStatusCheckAttempts) {
+        setError(`Gave up after ${maxStatusCheckAttempts} failed attempts to check status. The job may still be processing.`);
+        setLoading(false);
+        return;
+      }
+      
+      console.log(`Checking status for job: ${jobId}... (Attempt ${statusCheckAttempts + 1}/${maxStatusCheckAttempts})`);
+      const statusResponse = await axios.get(`/api/videoStatus?jobId=${jobId}`);
+      
+      // Reset the status check attempts on success
+      setStatusCheckAttempts(0);
+      
+      console.log(`Got status response:`, statusResponse.data);
+      
+      if (statusResponse.data.status === "completed") {
+        // Media generation complete
+        setProgress(100);
+        
+        // Check if this is an audio file
+        const mediaUrl = statusResponse.data.videoUrl;
+        const isAudioOnly = mediaUrl.toLowerCase().endsWith('.mp3') || 
+                           mediaUrl.toLowerCase().includes('/audios/');
+        
+        if (isAudioOnly) {
+          console.log(`Audio generation completed: ${mediaUrl}`);
+        } else {
+          console.log(`Video generation completed: ${mediaUrl}`);
+        }
+        
+        // Pass the URL to the parent component regardless of whether it's audio or video
+        onVideoGenerated(mediaUrl);
+        setLoading(false);
+      } else if (statusResponse.data.status === "failed") {
+        // Generation failed
+        const errorMessage = statusResponse.data.error || "Generation failed. Please try again.";
+        console.error(`Media generation failed: ${errorMessage}`);
+        setError(errorMessage);
+        setLoading(false);
+      } else {
+        // Still processing
+        const currentProgress = statusResponse.data.progress || 0;
+        console.log(`Still processing: ${currentProgress}% complete`);
+        setProgress(currentProgress);
+        
+        // Schedule the next status check
+        statusCheckRef.current = setTimeout(checkStatus, 2000);
+      }
+    } catch (err) {
+      console.error("Error checking status:", err);
+      
+      // Increment the number of failed attempts
+      setStatusCheckAttempts(prev => prev + 1);
+      
+      if (statusCheckAttempts < maxStatusCheckAttempts - 1) {
+        // If we haven't reached the max attempts, schedule another check
+        // with increasing backoff time
+        const backoffTime = Math.min(2000 * Math.pow(1.5, statusCheckAttempts), 10000);
+        console.log(`Retrying status check in ${backoffTime}ms (attempt ${statusCheckAttempts + 1}/${maxStatusCheckAttempts})`);
+        statusCheckRef.current = setTimeout(checkStatus, backoffTime);
+      } else {
+        // Try to provide more helpful error messages
+        if (axios.isAxiosError(err) && err.response) {
+          if (err.response.status === 404) {
+            setError(`Job not found (ID: ${jobId}). The processing job may have been lost. Please try again.`);
+          } else {
+            setError(`Failed to check status: ${err.response.status} ${err.response.statusText}`);
+          }
+        } else {
+          setError(`Failed to check generation status: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
+        
+        setLoading(false);
+      }
+    }
+  };
+  
+  // Add a new function that directly uses a provided jobId for checking status
   const checkStatusWithId = async (specificJobId: string) => {
     try {
       // Clear the current timeout reference
-      if (statusCheckRef.current) {
-        clearTimeout(statusCheckRef.current);
-        statusCheckRef.current = null;
-      }
+      statusCheckRef.current = null;
       
       // If we've exceeded the maximum number of attempts, give up
       if (statusCheckAttempts >= maxStatusCheckAttempts) {
@@ -166,7 +390,7 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
         // Check if this is an audio file
         const mediaUrl = statusResponse.data.videoUrl;
         const isAudioOnly = mediaUrl.toLowerCase().endsWith('.mp3') || 
-                           mediaUrl.toLowerCase().includes('/audios/');
+                          mediaUrl.toLowerCase().includes('/audios/');
         
         if (isAudioOnly) {
           console.log(`Audio generation completed: ${mediaUrl}`);
@@ -220,67 +444,6 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
       }
     }
   };
-  
-  const handleGenerateVideo = async () => {
-    // Clear any previous state
-    setLoading(true);
-    setError(null);
-    setProgress(0);
-    setJobId(null);
-    setStatusCheckAttempts(0);
-    cleanup();
-    
-    try {
-      console.log("Starting media generation process...");
-      
-      // Start video or audio generation with the selected voice
-      const generateResponse = await axios.post("/api/generateVideo", {
-        script,
-        voiceId: selectedVoice
-      });
-      
-      const newJobId = generateResponse.data.jobId;
-      
-      if (!newJobId) {
-        throw new Error("Failed to start generation - no job ID returned");
-      }
-      
-      // Store job ID in state for future reference
-      setJobId(newJobId);
-      console.log(`Generation job started with ID: ${newJobId}`);
-      
-      // Start checking the status after a short delay
-      statusCheckRef.current = setTimeout(() => checkStatusWithId(newJobId), 2000);
-      
-    } catch (err) {
-      console.error("Error generating media:", err);
-      
-      // Try to provide more helpful error messages
-      if (axios.isAxiosError(err) && err.response) {
-        setError(`Generation failed: ${err.response.status} ${err.response.statusText} - ${err.response.data?.error || 'Unknown error'}`);
-      } else {
-        setError(`An error occurred during generation: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      }
-      
-      setLoading(false);
-    }
-  };
-  
-  // Function to retry video generation
-  const handleRetry = () => {
-    // Clean up any existing timeouts
-    cleanup();
-    
-    // Just call handleGenerateVideo again
-    handleGenerateVideo();
-  };
-  
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      cleanup();
-    };
-  }, []);
   
   return (
     <Card>

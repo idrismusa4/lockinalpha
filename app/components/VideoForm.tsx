@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import axios from 'axios';
 import { renderVideoWithRemotion } from '../services/videoService';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -8,16 +9,121 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/components/ui/use-toast';
 import { v4 as uuidv4 } from 'uuid';
+import { VOICE_OPTIONS, DEFAULT_VOICE_ID } from '@/app/services/voiceOptions';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Volume2, Pause } from "lucide-react";
 
 export default function VideoForm() {
   const [script, setScript] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [selectedVoice, setSelectedVoice] = useState(DEFAULT_VOICE_ID);
+  const [previewText, setPreviewText] = useState<string>('');
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast();
+
+  // Update preview text when script changes
+  useEffect(() => {
+    if (script) {
+      // Take the first 100 characters for preview
+      setPreviewText(script.slice(0, 100) + (script.length > 100 ? "..." : ""));
+    } else {
+      setPreviewText('');
+    }
+  }, [script]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      if (previewTimeoutRef.current) {
+        clearTimeout(previewTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleScriptChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setScript(event.target.value);
+    // Stop any current preview when text changes
+    if (isPreviewing) {
+      stopPreview();
+    }
+  };
+
+  const handleVoiceChange = (value: string) => {
+    setSelectedVoice(value);
+    // Stop any current preview when voice changes
+    if (isPreviewing) {
+      stopPreview();
+    }
+  };
+
+  const stopPreview = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      setIsPreviewing(false);
+      audioRef.current = null;
+    }
+  };
+
+  const handlePreviewVoice = async () => {
+    if (!script) {
+      toast({
+        title: "Script is required",
+        description: "Please enter a script to preview the voice.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // If already previewing, stop it
+    if (isPreviewing) {
+      stopPreview();
+      return;
+    }
+
+    try {
+      setIsPreviewing(true);
+
+      const response = await axios.post("/api/previewVoice", {
+        text: previewText,
+        voiceId: selectedVoice
+      });
+
+      if (response.data.audioUrl) {
+        // Stop any existing preview
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+
+        // Create new audio element
+        const audio = new Audio(response.data.audioUrl);
+        audioRef.current = audio;
+
+        // Play the preview
+        audio.play();
+
+        // Clean up when done
+        audio.onended = () => {
+          setIsPreviewing(false);
+          audioRef.current = null;
+        };
+      }
+    } catch (err) {
+      console.error("Error previewing voice:", err);
+      toast({
+        title: "Voice Preview Failed",
+        description: "Could not generate voice preview. Please try again.",
+        variant: "destructive",
+      });
+      setIsPreviewing(false);
+    }
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -40,12 +146,11 @@ export default function VideoForm() {
       // Generate a unique job ID for this render
       const jobId = uuidv4();
       
-      // Start the render process
+      // Start the render process with selected voice
       const url = await renderVideoWithRemotion({
         script,
         jobId,
-        // We can't use the progress callback directly with server actions
-        // This is a limitation, progress will only update after completion
+        voiceId: selectedVoice
       });
       
       // Set progress to 100% when complete
@@ -86,6 +191,51 @@ export default function VideoForm() {
               onChange={handleScriptChange}
               disabled={isLoading}
             />
+            
+            <div className="space-y-2">
+              <Label htmlFor="voice">Narrator Voice</Label>
+              <div className="flex gap-2">
+                <Select 
+                  value={selectedVoice} 
+                  onValueChange={handleVoiceChange}
+                  disabled={isLoading}
+                >
+                  <SelectTrigger id="voice" className="flex-1">
+                    <SelectValue placeholder="Select a voice" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VOICE_OPTIONS.map((voice) => (
+                      <SelectItem key={voice.id} value={voice.id}>
+                        {voice.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handlePreviewVoice}
+                  disabled={isLoading || !script}
+                  className="flex items-center gap-2"
+                  size="sm"
+                >
+                  {isPreviewing ? (
+                    <>
+                      <Pause className="h-4 w-4" />
+                      <span>Pause</span>
+                    </>
+                  ) : (
+                    <>
+                      <Volume2 className="h-4 w-4" />
+                      <span>Preview</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Select a voice and click Preview to hear how it sounds
+              </p>
+            </div>
             
             {isLoading && (
               <div className="space-y-2">

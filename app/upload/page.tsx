@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 
-export default function Dashboard() {
+export default function Upload() {
   const [documentUrl, setDocumentUrl] = useState<string | null>(null);
   const [documentName, setDocumentName] = useState<string | null>(null);
   const [script, setScript] = useState<string | null>(null);
@@ -118,7 +118,7 @@ export default function Dashboard() {
           {videoUrl ? (
             <VideoPlayer videoUrl={videoUrl} />
           ) : (
-            <div className="bg-card rounded-lg border h-[400px] flex flex-col items-center justify-center p-8 text-center space-y-4">
+            <div className="bg-card rounded-lg border h-[300px] flex flex-col items-center justify-center p-8 text-center space-y-4">
               <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground">
                   <polygon points="23 7 16 12 23 17 23 7"></polygon>

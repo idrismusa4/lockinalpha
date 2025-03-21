@@ -1,6 +1,6 @@
 "use server";
 
-import { PollyClient, SynthesizeSpeechCommand } from "@aws-sdk/client-polly";
+import { PollyClient, SynthesizeSpeechCommand, SynthesizeSpeechCommandOutput } from "@aws-sdk/client-polly";
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -10,6 +10,12 @@ import { DEFAULT_VOICE_ID } from './voiceOptions';
 
 // Promisify exec for async/await usage
 const exec = promisify(execCallback);
+
+// Define types for exec output
+interface ExecResult {
+  stdout: string;
+  stderr: string;
+}
 
 // AWS Polly client configuration
 const pollyClient = new PollyClient({
@@ -88,7 +94,7 @@ export async function textToSpeech(
       Engine: "neural", // Use neural engine for better quality
     });
 
-    const response = await pollyClient.send(command);
+    const response: SynthesizeSpeechCommandOutput = await pollyClient.send(command);
     
     if (!response.AudioStream) {
       throw new Error('No audio stream received from Polly');
@@ -135,19 +141,39 @@ export async function convertScriptToSpeech(
     if (textChunks.length === 1) {
       await textToSpeech(textChunks[0], outputPath, voiceId);
     } else {
-      // For multiple chunks, we'll use the first chunk for now
-      // This is a temporary solution until we implement a better audio concatenation method
-      console.log('Multiple chunks detected. Using first chunk only for now.');
-      await textToSpeech(textChunks[0], outputPath, voiceId);
+      // For multiple chunks, we'll create and concatenate multiple audio files
+      const chunkFiles: string[] = [];
       
-      // Log a warning about the limitation
-      console.warn('Warning: Long scripts are currently limited to the first chunk due to FFmpeg not being available.');
+      // Create audio for each chunk
+      for (let i = 0; i < textChunks.length; i++) {
+        const chunkPath = path.join(tmpDir, `chunk-${i}.mp3`);
+        await textToSpeech(textChunks[i], chunkPath, voiceId);
+        chunkFiles.push(chunkPath);
+      }
+      
+      // Try to combine the audio files
+      try {
+        await combineAudioFiles(chunkFiles, outputPath);
+        
+        // Clean up the chunk files
+        chunkFiles.forEach(file => {
+          if (fs.existsSync(file)) {
+            fs.unlinkSync(file);
+          }
+        });
+      } catch (combineError) {
+        console.warn('Warning: Could not combine audio chunks. Using first chunk only.', combineError);
+        // If combining fails, use the first chunk as fallback
+        if (fs.existsSync(chunkFiles[0])) {
+          fs.copyFileSync(chunkFiles[0], outputPath);
+        }
+      }
     }
     
     return outputPath;
   } catch (error) {
     console.error('Error converting script to speech:', error);
-    throw error;
+    throw new Error(`Script to speech conversion failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -190,19 +216,32 @@ function splitTextForTTS(text: string, maxChunkLength = 3000): string[] {
  */
 async function combineAudioFiles(inputFiles: string[], outputFile: string): Promise<void> {
   try {
+    // Check if ffmpeg is available
+    try {
+      await exec('ffmpeg -version');
+    } catch (ffmpegError) {
+      throw new Error('FFmpeg is not available for audio file combination');
+    }
+    
     // Create a file list for ffmpeg
-    const fileList = inputFiles.map(file => `file '${file}'`).join('\n');
+    const fileList = inputFiles.map(file => `file '${file.replace(/'/g, "'\\''")}'`).join('\n');
     const listFile = path.join(path.dirname(outputFile), 'filelist.txt');
     fs.writeFileSync(listFile, fileList);
 
     // Use ffmpeg to concatenate the files
     const command = `ffmpeg -f concat -safe 0 -i "${listFile}" -c copy "${outputFile}"`;
-    await exec(command);
+    const { stdout, stderr }: ExecResult = await exec(command);
+    
+    if (stderr && !fs.existsSync(outputFile)) {
+      throw new Error(`FFmpeg error: ${stderr}`);
+    }
 
     // Clean up the list file
-    fs.unlinkSync(listFile);
+    if (fs.existsSync(listFile)) {
+      fs.unlinkSync(listFile);
+    }
   } catch (error) {
     console.error('Error combining audio files:', error);
-    throw error;
+    throw new Error(`Failed to combine audio files: ${error instanceof Error ? error.message : String(error)}`);
   }
 } 

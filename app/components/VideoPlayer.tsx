@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, MutableRefObject } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -12,6 +12,12 @@ interface VideoPlayerProps {
   onRetry?: () => void;
 }
 
+// Define clearer types for media errors
+type MediaErrorType = {
+  code: number | 'unknown';
+  message: string;
+};
+
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -21,9 +27,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
   const [useFallbackPlayer, setUseFallbackPlayer] = useState(false);
   const [isFetchingBlob, setIsFetchingBlob] = useState(false);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  
+  // Use MutableRefObject for refs we might programmatically update
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     // Reset state and force remount of media elements when URL changes
@@ -115,14 +124,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
     }
   };
 
+  // Helper function to safely update video ref
+  const safelyUpdateVideoRef = (video: HTMLVideoElement): void => {
+    // Using a type cast with a function is safer than direct assignment
+    const mutableVideoRef = videoRef as MutableRefObject<HTMLVideoElement | null>;
+    if (mutableVideoRef) {
+      mutableVideoRef.current = video;
+    }
+  };
+
   // Method to fetch video as blob and create object URL
   const handlePlayWithBlob = async () => {
-    if (blobUrl) {
+    if (blobUrl && videoRef.current) {
       // If we already have a blob URL, use it
-      if (videoRef.current) {
-        videoRef.current.src = blobUrl;
-        videoRef.current.play().catch(e => console.error("Error playing blob video:", e));
-      }
+      videoRef.current.src = blobUrl;
+      videoRef.current.play().catch(e => console.error("Error playing blob video:", e));
       return;
     }
     
@@ -174,10 +190,27 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
         console.log("Blob video can play!");
         setLoading(false);
         
-        // Replace the existing video with our new blob-sourced video
-        if (videoRef.current && videoRef.current.parentNode) {
-          videoRef.current.parentNode.replaceChild(video, videoRef.current);
-          videoRef.current = video;
+        // Use a safer DOM approach with null checks
+        if (videoContainerRef.current) {
+          // Clear and replace contents safely
+          while (videoContainerRef.current.firstChild) {
+            videoContainerRef.current.removeChild(videoContainerRef.current.firstChild);
+          }
+          videoContainerRef.current.appendChild(video);
+          
+          // Update the ref safely
+          setTimeout(() => {
+            safelyUpdateVideoRef(video);
+          }, 0);
+        } else if (videoRef.current && videoRef.current.parentNode) {
+          // Fallback to the old approach if needed
+          const parentNode = videoRef.current.parentNode;
+          parentNode.replaceChild(video, videoRef.current);
+          
+          // Update the ref safely
+          setTimeout(() => {
+            safelyUpdateVideoRef(video);
+          }, 0);
         }
       };
       
@@ -228,7 +261,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
       return (
         <div className="w-full mb-4">
           {/* Main player - HTML5 Video with optimized settings for Supabase */}
-          <div className="relative">
+          <div className="relative" ref={videoContainerRef}>
             <video 
               key={`direct-video-${key}`}
               ref={videoRef}
@@ -273,22 +306,72 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
     }
     
     return (
-      <video 
-        key={`video-${key}`}
-        ref={videoRef}
-        src={videoUrl} 
-        controls 
-        className="w-full rounded-md mb-4 bg-black" 
-        onError={handleMediaError}
-        onCanPlay={handleMediaLoaded}
-        onLoadedMetadata={(e) => console.log("Video metadata loaded:", e.currentTarget.duration, "seconds")}
-        onLoadStart={() => console.log("Video load started:", videoUrl)}
-        controlsList="nodownload"
-        preload="auto"
-        poster="/video-poster.png"
-        playsInline
-      />
+      <div ref={videoContainerRef}>
+        <video 
+          key={`video-${key}`}
+          ref={videoRef}
+          src={videoUrl} 
+          controls 
+          className="w-full rounded-md mb-4 bg-black" 
+          onError={handleMediaError}
+          onCanPlay={handleMediaLoaded}
+          onLoadedMetadata={(e) => console.log("Video metadata loaded:", e.currentTarget.duration, "seconds")}
+          onLoadStart={() => console.log("Video load started:", videoUrl)}
+          controlsList="nodownload"
+          preload="auto"
+          poster="/video-poster.png"
+          playsInline
+        />
+      </div>
     );
+  };
+
+  // Create a safe download function
+  const handleDownload = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    // For Supabase URLs, we need to handle download specially
+    if (videoUrl.includes('supabase.co')) {
+      e.preventDefault();
+      
+      // Option 1: Try to use the Blob approach if available
+      if (blobUrl) {
+        const downloadLink = document.createElement('a');
+        downloadLink.href = blobUrl;
+        downloadLink.download = `video-${videoUrl.split('/').pop()?.split('?')[0] || `video-${key}`}`;
+        downloadLink.click();
+        return;
+      }
+      
+      // Option 2: Use the fetch API to download the file
+      setIsFetchingBlob(true);
+      fetch(videoUrl, { 
+        credentials: 'omit',
+        mode: 'cors' 
+      })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          return response.blob();
+        })
+        .then(blob => {
+          setIsFetchingBlob(false);
+          const url = URL.createObjectURL(blob);
+          const downloadLink = document.createElement('a');
+          downloadLink.href = url;
+          downloadLink.download = `video-${videoUrl.split('/').pop()?.split('?')[0] || `video-${key}`}`;
+          document.body.appendChild(downloadLink);
+          downloadLink.click();
+          document.body.removeChild(downloadLink);
+          setTimeout(() => URL.revokeObjectURL(url), 100);
+        })
+        .catch((err: Error) => {
+          setIsFetchingBlob(false);
+          console.error('Error downloading video:', err);
+          // Fallback to direct link if fetch fails
+          window.open(videoUrl, '_blank');
+        });
+    }
+    // For non-Supabase URLs, let the browser handle it naturally
   };
 
   return (
@@ -451,47 +534,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex-shrink-0"
-                onClick={(e) => {
-                  // For Supabase URLs, we need to handle download specially
-                  if (videoUrl.includes('supabase.co')) {
-                    e.preventDefault();
-                    
-                    // Option 1: Try to use the Blob approach if available
-                    if (blobUrl) {
-                      const downloadLink = document.createElement('a');
-                      downloadLink.href = blobUrl;
-                      downloadLink.download = `video-${videoUrl.split('/').pop()?.split('?')[0] || `video-${key}`}`;
-                      downloadLink.click();
-                      return;
-                    }
-                    
-                    // Option 2: Use the fetch API to download the file
-                    setIsFetchingBlob(true);
-                    fetch(videoUrl, { 
-                      credentials: 'omit',
-                      mode: 'cors' 
-                    })
-                      .then(response => response.blob())
-                      .then(blob => {
-                        setIsFetchingBlob(false);
-                        const url = URL.createObjectURL(blob);
-                        const downloadLink = document.createElement('a');
-                        downloadLink.href = url;
-                        downloadLink.download = `video-${videoUrl.split('/').pop()?.split('?')[0] || `video-${key}`}`;
-                        document.body.appendChild(downloadLink);
-                        downloadLink.click();
-                        document.body.removeChild(downloadLink);
-                        setTimeout(() => URL.revokeObjectURL(url), 100);
-                      })
-                      .catch(err => {
-                        setIsFetchingBlob(false);
-                        console.error('Error downloading video:', err);
-                        // Fallback to direct link if fetch fails
-                        window.open(videoUrl, '_blank');
-                      });
-                  }
-                  // For non-Supabase URLs, let the browser handle it naturally
-                }}
+                onClick={handleDownload}
               >
                 <Button 
                   variant="outline"

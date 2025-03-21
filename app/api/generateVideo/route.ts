@@ -3,11 +3,26 @@ import { v4 as uuidv4 } from 'uuid';
 // We'll use dynamic import instead of require
 import { createJob, updateJobStatus, completeJob, failJob, updateJobProgress } from '../../services/jobService';
 
+// Define interface for expected request body
+interface VideoGenerationRequest {
+  script: string;
+  voiceId?: string;
+}
+
+// Add type for the renderVideoFallback function
+type RenderVideoFallbackFunction = (params: {
+  script: string;
+  jobId: string;
+  voiceId?: string;
+  onProgress?: (progress: number) => void;
+}) => Promise<string>;
+
 export async function POST(request: Request) {
   let jobId = '';
   
   try {
-    const { script, voiceId } = await request.json();
+    const body = await request.json() as VideoGenerationRequest;
+    const { script, voiceId } = body;
     
     if (!script) {
       return NextResponse.json(
@@ -17,7 +32,7 @@ export async function POST(request: Request) {
     }
     
     // Dynamically import the videoFallbackService
-    let renderVideoFallback: any = null;
+    let renderVideoFallback: RenderVideoFallbackFunction | null = null;
     try {
       const videoModule = await import('../../services/videoFallbackService');
       renderVideoFallback = videoModule.renderVideoFallback;
@@ -76,7 +91,7 @@ export async function POST(request: Request) {
   }
 }
 
-async function processVideoGeneration(jobId: string, script: string, voiceId?: string) {
+async function processVideoGeneration(jobId: string, script: string, voiceId?: string): Promise<string> {
   try {
     console.log(`Starting video generation process for job ${jobId}`);
     
@@ -87,7 +102,7 @@ async function processVideoGeneration(jobId: string, script: string, voiceId?: s
     });
     
     // Dynamically import the videoFallbackService
-    let renderVideoFallback: any = null;
+    let renderVideoFallback: RenderVideoFallbackFunction | null = null;
     try {
       const videoModule = await import('../../services/videoFallbackService');
       renderVideoFallback = videoModule.renderVideoFallback;
@@ -95,6 +110,12 @@ async function processVideoGeneration(jobId: string, script: string, voiceId?: s
       console.error('Failed to import videoFallbackService:', importError);
       await failJob(jobId, 'Video generation service is not available in this environment');
       throw new Error('Video generation service is not available');
+    }
+    
+    // Ensure renderVideoFallback was loaded successfully
+    if (!renderVideoFallback) {
+      await failJob(jobId, 'Video rendering function could not be loaded');
+      throw new Error('Video rendering function could not be loaded');
     }
     
     // Use the fallback video rendering service instead of Remotion

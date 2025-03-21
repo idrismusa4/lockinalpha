@@ -24,12 +24,73 @@ const TMP_DIR = process.env.NODE_ENV === 'production'
 // Flag for checking if we're in a serverless environment
 const IS_SERVERLESS = process.env.VERCEL === '1';
 
+// Define proper types for the module
 interface VideoRenderParams {
   script: string;
   jobId: string;
   voiceId?: string;
   onProgress?: (progress: number) => void;
 }
+
+// Define upload parameters type
+interface UploadParams {
+  filePath: string;
+  jobId: string;
+  fileExtension: string;
+  contentType: string;
+  isAudioOnly: boolean;
+  bucketName: string;
+}
+
+// Define result from exec to avoid any types
+interface ExecResult {
+  stdout: string;
+  stderr: string;
+}
+
+// Type for RemotionBundler
+type RemotionBundlerType = {
+  bundle: (options: {
+    entryPoint: string;
+    webpackOverride?: (config: any) => any;
+  }) => Promise<string>;
+};
+
+// Type for RemotionRenderer
+type RemotionRendererType = {
+  renderMedia: (options: {
+    composition: { 
+      id: string; 
+      defaultProps?: any; 
+      width: number; 
+      height: number; 
+      fps: number; 
+      durationInFrames: number;
+    };
+    serveUrl: string;
+    codec?: string;
+    outputLocation: string;
+    imageFormat?: string;
+    onProgress?: (progress: any) => void;
+    durationInFrames?: number;
+    fps?: number;
+    chromiumOptions?: any;
+    pixelFormat?: string;
+    props?: Record<string, unknown>;
+  }) => Promise<void>;
+  selectComposition: (options: {
+    serveUrl: string;
+    id: string;
+    inputProps: Record<string, unknown>;
+  }) => Promise<{
+    id: string;
+    defaultProps?: any;
+    width: number;
+    height: number;
+    fps: number;
+    durationInFrames: number;
+  }>;
+};
 
 /**
  * A fallback video rendering service that creates a video using
@@ -65,13 +126,11 @@ export async function renderVideoFallback({
     // Generate audio from script using AWS Polly
     console.log('Generating speech from text using AWS Polly...');
     try {
-      await convertScriptToSpeech(script, jobId, voiceId)
-        .then(audioPath => {
-          // Copy the audio file to the expected location if needed
-          if (audioPath !== audioFile && fs.existsSync(audioPath)) {
-            fs.copyFileSync(audioPath, audioFile);
-          }
-        });
+      const audioPath = await convertScriptToSpeech(script, jobId, voiceId);
+      // Copy the audio file to the expected location if needed
+      if (audioPath !== audioFile && fs.existsSync(audioPath)) {
+        fs.copyFileSync(audioPath, audioFile);
+      }
       
       await updateJobProgress(jobId, 30);
       onProgress(30);
@@ -157,7 +216,7 @@ export async function renderVideoFallback({
     
     // Upload the rendered file to Supabase Storage
     console.log(`Uploading ${isAudioOnly ? 'audio' : 'video'} to storage in ${bucketName} bucket...`);
-    let mediaUrl;
+    let mediaUrl: string;
     try {
       // Use the correct bucket name and file extension
       mediaUrl = await uploadToSupabase(fileToUpload, jobId, fileExtension, contentType, isAudioOnly, bucketName);
@@ -214,8 +273,8 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
     }
     
     // Try to dynamically import Remotion packages
-    let RemotionBundler;
-    let RemotionRenderer;
+    let RemotionBundler: RemotionBundlerType | null = null;
+    let RemotionRenderer: RemotionRendererType | null = null;
     
     try {
       // Using dynamic import with catch to handle missing packages
@@ -229,8 +288,8 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
         return null;
       });
       
-      RemotionBundler = bundlerModule;
-      RemotionRenderer = rendererModule;
+      RemotionBundler = bundlerModule as RemotionBundlerType;
+      RemotionRenderer = rendererModule as RemotionRendererType;
     } catch (importError) {
       console.log('Could not import Remotion packages. This is expected in some environments.', importError);
       return false;
@@ -318,7 +377,7 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
       serveUrl: bundleLocation,
       codec: 'h264',
       outputLocation: outputPath,
-      inputProps: {
+      props: {
         script,
         audioUrl: tmpAudioPath,
       },
@@ -600,113 +659,51 @@ async function createSlideImage(outputPath: string, text: string, slideNumber: n
 async function uploadToSupabase(
   filePath: string, 
   jobId: string, 
-  fileExtension: string = '.mp4',
-  contentType: string = 'video/mp4',
-  isAudioOnly: boolean = false,
-  bucketName: string = 'videos' // Default to videos bucket
+  fileExtension: string,
+  contentType: string,
+  isAudioOnly: boolean,
+  bucketName: string
 ): Promise<string> {
+  console.log(`Uploading to Supabase: ${filePath} to bucket ${bucketName}`);
+  
   try {
-    // If no bucket is specified, choose based on the file type
-    if (!bucketName) {
-      bucketName = isAudioOnly ? 'audios' : 'videos';
-    }
+    // Read the file data
+    const data = fs.readFileSync(filePath);
+    const uniqueFileName = `${jobId}${fileExtension}`;
     
-    const fileName = `${jobId}${fileExtension}`;
-    
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`File not found at path: ${filePath}`);
-    }
-    
-    const fileBuffer = fs.readFileSync(filePath);
-    if (fileBuffer.length < 100) {
-      throw new Error(`File is too small (${fileBuffer.length} bytes) and may be corrupted`);
-    }
-    
-    console.log(`Uploading to Supabase bucket '${bucketName}': ${fileName}, size: ${fileBuffer.length} bytes, contentType: ${contentType}`);
-    
-    // Check if storage is initialized
-    if (!storage) {
-      throw new Error('Supabase storage is not initialized');
-    }
-
-    // Add explicit file metadata to help with content type detection
-    const metadata = {
-      'Content-Type': contentType,
-      'x-amz-meta-contentType': contentType,
-      'Cache-Control': 'max-age=3600, public',
-    };
-    
-    // Upload the file to the appropriate bucket with proper content type and caching headers
-    const { error: uploadError, data: uploadData } = await storage
+    // Upload to the specified bucket
+    const { data: fileData, error } = await storage
       .from(bucketName)
-      .upload(fileName, fileBuffer, {
-        contentType: contentType,
-        cacheControl: 'max-age=3600, public',
-        upsert: true,
-        duplex: 'half',
-        metadata: metadata
+      .upload(uniqueFileName, data, {
+        contentType,
+        cacheControl: 'public, max-age=31536000', // Cache for 1 year
+        upsert: true
       });
-      
-    if (uploadError) {
-      console.error('Supabase upload error:', uploadError);
-      throw uploadError;
+    
+    if (error) {
+      console.error(`Error uploading to bucket '${bucketName}':`, error);
+      throw new Error(`Supabase storage upload error: ${error.message}`);
     }
     
-    console.log('Upload successful, getting public URL:', uploadData);
+    if (!fileData?.path) {
+      throw new Error(`No file path returned from Supabase upload to bucket '${bucketName}'`);
+    }
     
-    // Get the public URL
-    const { data: urlData } = storage
+    console.log(`Successfully uploaded to Supabase at: ${fileData.path}`);
+    
+    // Create a public URL for the file
+    const { data: publicURL } = storage
       .from(bucketName)
-      .getPublicUrl(fileName);
-      
-    if (!urlData || !urlData.publicUrl) {
-      throw new Error(`Failed to get public URL for the uploaded ${isAudioOnly ? 'audio' : 'video'}`);
+      .getPublicUrl(uniqueFileName);
+    
+    if (!publicURL?.publicUrl) {
+      throw new Error(`Couldn't get public URL for file in '${bucketName}'`);
     }
     
-    // Log the public URL for debugging
-    console.log(`${isAudioOnly ? 'Audio' : 'Video'} uploaded successfully to bucket '${bucketName}'`);
-    console.log(`Public URL: ${urlData.publicUrl}`);
-    
-    // Ensure the URL is properly formatted for video playback
-    let finalUrl = urlData.publicUrl;
-    
-    // Some browsers have issues with Supabase URLs that have complex query parameters
-    // Let's clean it up to improve compatibility
-    if (finalUrl.includes('?')) {
-      // Remove any query parameters that might cause issues
-      finalUrl = finalUrl.split('?')[0];
-    }
-    
-    // Get the full, absolute URL with proper encoding
-    try {
-      const url = new URL(finalUrl);
-      finalUrl = url.toString();
-      console.log(`Final optimized URL: ${finalUrl}`);
-    } catch (urlError) {
-      console.warn(`Unable to parse URL: ${finalUrl}`, urlError);
-      // Continue with the original URL
-    }
-    
-    // Validate the URL is accessible
-    try {
-      const validateResponse = await fetch(finalUrl, { method: 'HEAD' });
-      if (!validateResponse.ok) {
-        console.warn(`Warning: Media URL returned ${validateResponse.status} status code. Media might not be accessible.`);
-      } else {
-        console.log(`Media URL validation successful: ${validateResponse.status} ${validateResponse.statusText}`);
-        // Log content type and content length headers
-        console.log('Content-Type:', validateResponse.headers.get('content-type'));
-        console.log('Content-Length:', validateResponse.headers.get('content-length'));
-      }
-    } catch (validateError) {
-      console.warn('Warning: Could not validate media URL accessibility:', validateError);
-      // Don't throw here, try to proceed anyway
-    }
-    
-    return finalUrl;
-  } catch (error) {
-    console.error(`Error uploading ${isAudioOnly ? 'audio' : 'video'} to Supabase:`, error);
-    throw error; // Let the caller handle this error
+    console.log(`Public URL generated: ${publicURL.publicUrl}`);
+    return publicURL.publicUrl;
+  } catch (err) {
+    console.error('Error in uploadToSupabase:', err);
+    throw err;
   }
 }

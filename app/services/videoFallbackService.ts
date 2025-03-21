@@ -10,6 +10,9 @@ import { convertScriptToSpeech } from './awsPollyService';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
+// No direct import of Remotion packages at the top level
+// These will be dynamically imported in the tryRemotionRender function
+
 // Promisify exec for async/await usage
 const execAsync = promisify(exec);
 
@@ -203,9 +206,35 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
   try {
     console.log('Attempting to render video using Remotion...');
     
+    // Skip Remotion rendering in serverless environments like Vercel
+    const isServerless = process.env.VERCEL === '1' || process.env.AWS_LAMBDA_FUNCTION_NAME;
+    if (isServerless) {
+      console.log('Detected serverless environment. Skipping Remotion rendering.');
+      return false;
+    }
+    
     // Try to dynamically import Remotion packages
-    const RemotionBundler = await import('@remotion/bundler').catch(() => null);
-    const RemotionRenderer = await import('@remotion/renderer').catch(() => null);
+    let RemotionBundler;
+    let RemotionRenderer;
+    
+    try {
+      // Using dynamic import with catch to handle missing packages
+      const bundlerModule = await import('@remotion/bundler').catch(err => {
+        console.log('Could not import @remotion/bundler:', err.message);
+        return null;
+      });
+      
+      const rendererModule = await import('@remotion/renderer').catch(err => {
+        console.log('Could not import @remotion/renderer:', err.message);
+        return null;
+      });
+      
+      RemotionBundler = bundlerModule;
+      RemotionRenderer = rendererModule;
+    } catch (importError) {
+      console.log('Could not import Remotion packages. This is expected in some environments.', importError);
+      return false;
+    }
 
     if (!RemotionBundler || !RemotionRenderer) {
       console.log('Could not import Remotion packages. Falling back to basic video creation.');

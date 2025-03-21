@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
-import { renderVideoFallback } from '../../services/videoFallbackService';
+// We'll use dynamic import instead of require
 import { createJob, updateJobStatus, completeJob, failJob, updateJobProgress } from '../../services/jobService';
 
 export async function POST(request: Request) {
@@ -13,6 +13,19 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Script is required' },
         { status: 400 }
+      );
+    }
+    
+    // Dynamically import the videoFallbackService
+    let renderVideoFallback: any = null;
+    try {
+      const videoModule = await import('../../services/videoFallbackService');
+      renderVideoFallback = videoModule.renderVideoFallback;
+    } catch (importError) {
+      console.error('Failed to import videoFallbackService:', importError);
+      return NextResponse.json(
+        { error: 'Video generation service is not available in this environment' },
+        { status: 500 }
       );
     }
     
@@ -72,6 +85,17 @@ async function processVideoGeneration(jobId: string, script: string, voiceId?: s
       status: 'processing',
       progress: 10
     });
+    
+    // Dynamically import the videoFallbackService
+    let renderVideoFallback: any = null;
+    try {
+      const videoModule = await import('../../services/videoFallbackService');
+      renderVideoFallback = videoModule.renderVideoFallback;
+    } catch (importError) {
+      console.error('Failed to import videoFallbackService:', importError);
+      await failJob(jobId, 'Video generation service is not available in this environment');
+      throw new Error('Video generation service is not available');
+    }
     
     // Use the fallback video rendering service instead of Remotion
     const videoUrl = await renderVideoFallback({

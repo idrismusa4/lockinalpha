@@ -37,6 +37,22 @@ const nextConfig = {
       config.resolve.alias['pdf.js-extract'] = false;
     }
 
+    // Handle optional dependencies that might not be available
+    config.externals = [...(config.externals || []), 
+      '@remotion/bundler',
+      '@remotion/renderer'
+    ];
+    
+    // Add fallbacks for Node.js modules used by Remotion
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      fs: false,
+      path: false,
+      os: false,
+      crypto: false,
+      child_process: false,
+    };
+
     return config;
   },
   // Increase serverless function timeout for media generation
@@ -76,6 +92,8 @@ const nextConfig = {
   },
   // Set output directory for deployed build
   distDir: '.next',
+  // Minimize output to reduce file operations
+  output: 'standalone',
 };
 
 module.exports = nextConfig; 

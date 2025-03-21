@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:notrace": "set NODE_OPTIONS=--max_old_space_size=4096 && set NEXT_TELEMETRY_DISABLED=1 && next build",
     "start": "next start",
     "lint": "next lint"
   },
@@ -89,5 +90,9 @@
   },
   "engines": {
     "node": "18.x"
+  },
+  "optionalDependencies": {
+    "@remotion/bundler": "^4.0.279",
+    "@remotion/renderer": "^4.0.279"
   }
 }

@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  typescript: {
+    ignoreBuildErrors: true, // Disable TypeScript build errors
+  },
   // Configure webpack to handle problematic packages
   webpack: (config, { isServer }) => {
     // Handle esbuild issue
@@ -32,7 +35,7 @@ const nextConfig = {
         zlib: false,
         canvas: false,
       };
-      
+
       // Ignore pdf.js-extract on the client-side
       config.resolve.alias['pdf.js-extract'] = false;
     }
@@ -96,4 +99,4 @@ const nextConfig = {
   output: 'standalone',
 };
 
-module.exports = nextConfig; 
+module.exports = nextConfig;

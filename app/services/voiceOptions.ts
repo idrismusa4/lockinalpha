@@ -1,10 +1,10 @@
 // Available voices in AWS Polly
 export const VOICE_OPTIONS = [
-  { id: "Matthew", name: "Matthew - Male" },
-  { id: "Joanna", name: "Joanna - Female" },
-  { id: "Stephen", name: "Stephen - Male" },
-  { id: "Emma", name: "Emma - Female" },
-  { id: "Brian", name: "Brian - Male" },
+  { id: "Matthew", name: "Bilal - Male" },
+  { id: "Joanna", name: "Elohor - Female" },
+  { id: "Stephen", name: "Idris - Male" },
+  { id: "Emma", name: "Gabrielle - Female" },
+  { id: "Brian", name: "Bolaji - Male" },
 ];
 
 // Default voice ID - "Matthew" voice

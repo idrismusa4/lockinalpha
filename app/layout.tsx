@@ -5,12 +5,17 @@ import Link from "next/link";
 import { ThemeProvider } from "@/components/ui/theme-provider";
 import { Toaster } from "@/components/ui/toaster";
 import { initializeSupabaseStorage } from "./supabase";
+import { Analytics } from "@vercel/analytics/react"
+import { SpeedInsights } from '@vercel/speed-insights/next';
 
-// Initialize Supabase storage buckets
-try {
-  initializeSupabaseStorage();
-} catch (error) {
-  console.error('Failed to initialize Supabase storage:', error);
+// Only initialize on the server and only once
+if (typeof window === 'undefined') {
+  try {
+    console.log('Server-side initialization of Supabase storage...');
+    initializeSupabaseStorage();
+  } catch (error) {
+    console.error('Failed to initialize Supabase storage:', error);
+  }
 }
 
 const lexend = Lexend({ subsets: ["latin"] });
@@ -29,6 +34,8 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={lexend.className}>
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+        <Analytics />
+        <SpeedInsights />
           <div className="flex min-h-screen flex-col">
             <header className="border-b">
               <div className="container flex h-16 items-center justify-between py-4">

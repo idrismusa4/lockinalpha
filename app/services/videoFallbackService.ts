@@ -265,13 +265,6 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
   try {
     console.log('Attempting to render video using Remotion...');
     
-    // Skip Remotion rendering in serverless environments like Vercel
-    const isServerless = process.env.VERCEL === '1' || process.env.AWS_LAMBDA_FUNCTION_NAME;
-    if (isServerless) {
-      console.log('Detected serverless environment. Skipping Remotion rendering.');
-      return false;
-    }
-    
     // Try to dynamically import Remotion packages
     let RemotionBundler: RemotionBundlerType | null = null;
     let RemotionRenderer: RemotionRendererType | null = null;
@@ -318,7 +311,6 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
     }
     
     // Create a simplified temporary copy of the audio file with a predictable name
-    // This helps resolve audio file access issues in Remotion
     const tmpDir = path.dirname(outputPath);
     const tmpAudioPath = path.join(tmpDir, `audio-${path.basename(audioPath)}`);
     fs.copyFileSync(audioPath, tmpAudioPath);
@@ -327,7 +319,6 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
     console.log(`Bundling Remotion project from: ${entryPoint}`);
     const bundleLocation = await bundle({
       entryPoint,
-      // Add webpack override to handle potential bundling issues
       webpackOverride: (config) => {
         return {
           ...config,
@@ -364,14 +355,14 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
     // Select the composition to render
     const composition = await selectComposition({
       serveUrl: bundleLocation,
-      id: 'VideoLecture', // Our composition ID defined in index.tsx
+      id: 'VideoLecture',
       inputProps: {
         script,
-        audioUrl: tmpAudioPath, // Use the local path for audio
+        audioUrl: tmpAudioPath,
       },
     });
     
-    // Render the video
+    // Render the video with serverless-compatible settings
     await renderMedia({
       composition,
       serveUrl: bundleLocation,
@@ -387,9 +378,18 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
       chromiumOptions: {
         disableWebSecurity: true,
         headless: true,
-        args: ['--disable-web-security', '--no-sandbox', '--disable-setuid-sandbox'],
+        args: [
+          '--disable-web-security',
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process'
+        ],
       },
-      pixelFormat: 'yuv420p', // Standard format for better compatibility
+      pixelFormat: 'yuv420p',
     });
     
     // Clean up the temporary audio file
@@ -405,7 +405,7 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
     if (fs.existsSync(outputPath)) {
       const stats = fs.statSync(outputPath);
       console.log(`Remotion successfully rendered video to: ${outputPath} (${stats.size} bytes)`);
-      if (stats.size < 10000) { // Less than 10KB is suspicious for a video
+      if (stats.size < 10000) {
         console.error('Remotion output file is too small, may be corrupted.');
         return false;
       }

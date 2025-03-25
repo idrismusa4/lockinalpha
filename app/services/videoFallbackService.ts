@@ -9,6 +9,8 @@ import { updateJobStatus, updateJobProgress } from './jobService';
 import { convertScriptToSpeech } from './awsPollyService';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import ffmpeg from '@ffmpeg-installer/ffmpeg';
+import ffprobe from '@ffmpeg-installer/ffprobe';
 
 // No direct import of Remotion packages at the top level
 // These will be dynamically imported in the tryRemotionRender function
@@ -466,8 +468,8 @@ async function createEnhancedSlideshowFromScript(outputPath: string, script: str
       throw new Error(`Audio file does not exist at path: ${audioPath}`);
     }
     
-    // Get audio duration
-    const { stdout: durationOutput } = await execAsync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`);
+    // Get audio duration using ffprobe
+    const { stdout: durationOutput } = await execAsync(`"${ffprobe.path}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`);
     const audioDuration = parseFloat(durationOutput);
     console.log(`Audio duration: ${audioDuration} seconds`);
     
@@ -499,7 +501,7 @@ async function createEnhancedSlideshowFromScript(outputPath: string, script: str
     console.log('Created image list file for FFmpeg');
     
     // Create a more robust FFmpeg command with explicit audio mapping
-    const ffmpegCmd = `ffmpeg -f concat -safe 0 -i "${imageListPath}" -i "${audioPath}" -map 0:v -map 1:a -vf "fps=24,format=yuv420p" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -shortest -pix_fmt yuv420p -t ${audioDuration} "${outputPath}"`;
+    const ffmpegCmd = `"${ffmpeg.path}" -f concat -safe 0 -i "${imageListPath}" -i "${audioPath}" -map 0:v -map 1:a -vf "fps=24,format=yuv420p" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -shortest -pix_fmt yuv420p -t ${audioDuration} "${outputPath}"`;
     
     console.log(`Executing FFmpeg command: ${ffmpegCmd}`);
     const { stdout, stderr } = await execAsync(ffmpegCmd);
@@ -560,13 +562,12 @@ async function createTitleImage(outputPath: string, title: string): Promise<void
       .trim()
       .substr(0, 80); // Limit length to avoid command issues
     
-    // Skip trying to render text since fontconfig causes issues on Windows
-    // Create a visually appealing gradient background instead
+    // Create a visually appealing gradient background
     const bgColor = '#1a2a6c';
     const gradientColor = '#2a4a9c';
     
     // Create a gradient effect with boxes instead of text
-    const ffmpegCmd = `ffmpeg -f lavfi -i "color=c=${bgColor}:s=1280x720" -vf "drawbox=x=0:y=0:w=1280:h=720:color=${gradientColor}@0.5:t=fill,drawbox=x=40:y=40:w=1200:h=150:color=${bgColor}@0.7:t=fill,drawbox=x=40:y=250:w=1200:h=100:color=${bgColor}@0.9:t=fill" -frames:v 1 "${outputPath}"`;
+    const ffmpegCmd = `"${ffmpeg.path}" -f lavfi -i "color=c=${bgColor}:s=1280x720" -vf "drawbox=x=0:y=0:w=1280:h=720:color=${gradientColor}@0.5:t=fill,drawbox=x=40:y=40:w=1200:h=150:color=${bgColor}@0.7:t=fill,drawbox=x=40:y=250:w=1200:h=100:color=${bgColor}@0.9:t=fill" -frames:v 1 "${outputPath}"`;
     
     console.log('Executing title image command');
     await execAsync(ffmpegCmd);
@@ -582,7 +583,7 @@ async function createTitleImage(outputPath: string, title: string): Promise<void
     // Fallback method - Create a simpler image if the first method fails
     try {
       // Create a very simple title image with minimal commands
-      const simpleCmd = `ffmpeg -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
+      const simpleCmd = `"${ffmpeg.path}" -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
       await execAsync(simpleCmd);
       
       if (!fs.existsSync(outputPath)) {
@@ -623,7 +624,7 @@ async function createSlideImage(outputPath: string, text: string, slideNumber: n
     const scheme = colorSchemes[slideNumber % colorSchemes.length];
     
     // Create a visually interesting slide with visual elements instead of text
-    const ffmpegCmd = `ffmpeg -f lavfi -i "color=c=${scheme.bg}:s=1280x720" -vf "drawbox=x=0:y=0:w=1280:h=720:color=${scheme.accent}@0.3:t=fill,drawbox=x=0:y=0:w=1280:h=100:color=${scheme.bg}@0.8:t=fill,drawbox=x=0:y=620:w=1280:h=100:color=${scheme.bg}@0.8:t=fill,drawbox=x=${(slideNumber % 4) * 250 + 100}:y=${200 + (slideNumber % 3) * 100}:w=200:h=200:color=${scheme.accent}@0.6:t=fill" -frames:v 1 "${outputPath}"`;
+    const ffmpegCmd = `"${ffmpeg.path}" -f lavfi -i "color=c=${scheme.bg}:s=1280x720" -vf "drawbox=x=0:y=0:w=1280:h=720:color=${scheme.accent}@0.3:t=fill,drawbox=x=0:y=0:w=1280:h=100:color=${scheme.bg}@0.8:t=fill,drawbox=x=0:y=620:w=1280:h=100:color=${scheme.bg}@0.8:t=fill,drawbox=x=${(slideNumber % 4) * 250 + 100}:y=${200 + (slideNumber % 3) * 100}:w=200:h=200:color=${scheme.accent}@0.6:t=fill" -frames:v 1 "${outputPath}"`;
     
     await execAsync(ffmpegCmd);
     
@@ -638,7 +639,7 @@ async function createSlideImage(outputPath: string, text: string, slideNumber: n
     // Fallback method - Create a simpler image if the first method fails
     try {
       // Create a very simple slide image with minimal commands
-      const simpleCmd = `ffmpeg -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
+      const simpleCmd = `"${ffmpeg.path}" -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
       await execAsync(simpleCmd);
       
       if (!fs.existsSync(outputPath)) {

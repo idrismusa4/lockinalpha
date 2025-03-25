@@ -64,7 +64,13 @@ const nextConfig = {
   },
   // External packages for serverless environment
   experimental: {
-    serverComponentsExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg', 'pdf.js-extract'],
+    serverComponentsExternalPackages: [
+      'ffmpeg-static', 
+      'fluent-ffmpeg', 
+      'pdf.js-extract',
+      '@ffmpeg-installer/ffmpeg',
+      '@ffmpeg-installer/ffprobe'
+    ],
   },
   // Optionally increase memory limit for builds if needed
   onDemandEntries: {

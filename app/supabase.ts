@@ -125,6 +125,65 @@ export const initializeSupabaseStorage = async () => {
       console.error('Error checking/creating videos bucket:', videoError);
     }
     
+    // Create audios bucket if it doesn't exist
+    try {
+      const { data: audiosData, error: checkAudiosBucketError } = await storage.getBucket('audios');
+      
+      if (checkAudiosBucketError && checkAudiosBucketError.message.includes('does not exist')) {
+        console.log('Creating audios bucket...');
+        const { error: createAudiosBucketError } = await storage.createBucket('audios', {
+          public: true, 
+          fileSizeLimit: 50 * 1024 * 1024, // 50MB limit
+          allowedMimeTypes: ['audio/mpeg', 'audio/mp3', 'audio/wav']
+        });
+        
+        if (createAudiosBucketError) {
+          console.error('Error creating audios bucket:', createAudiosBucketError);
+        } else {
+          console.log('Created audios bucket successfully');
+          
+          // Set CORS policy to allow all origins
+          try {
+            // Update bucket's CORS configuration
+            const { error: corsError } = await storage.updateBucket('audios', {
+              corsAllowOrigins: ['*'],
+              corsAllowMethods: ['GET', 'HEAD'],
+              corsExposeHeaders: ['Content-Length', 'Content-Type']
+            });
+            
+            if (corsError) {
+              console.error('Error setting CORS policy for audios bucket:', corsError);
+            } else {
+              console.log('Updated CORS policy for audios bucket successfully');
+            }
+          } catch (corsError) {
+            console.error('Error updating CORS configuration for audios bucket:', corsError);
+          }
+        }
+      } else if (audiosData) {
+        console.log('Audios bucket already exists');
+        
+        // Ensure CORS is configured even if bucket already exists
+        try {
+          const { error: corsError } = await storage.updateBucket('audios', {
+            corsAllowOrigins: ['*'],
+            corsAllowMethods: ['GET', 'HEAD'],
+            corsExposeHeaders: ['Content-Length', 'Content-Type']
+          });
+          
+          if (corsError) {
+            console.error('Error updating CORS policy for existing audios bucket:', corsError);
+          } else {
+            console.log('Updated CORS policy for existing audios bucket successfully');
+          }
+        } catch (corsError) {
+          console.error('Error updating CORS for existing audios bucket:', corsError);
+        }
+      }
+    } catch (audioError) {
+      console.error('Error checking/creating audios bucket:', audioError);
+    }
+    
     console.log('Supabase storage initialization completed');
   } catch (error) {
     console.error('Error initializing Supabase storage:', error);

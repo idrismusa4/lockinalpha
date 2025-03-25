@@ -8,13 +8,18 @@ import { initializeSupabaseStorage } from "./supabase";
 import { Analytics } from "@vercel/analytics/react"
 import { SpeedInsights } from '@vercel/speed-insights/next';
 
-// Only initialize on the server and only once
+// Ensure Supabase storage is initialized on the server side
 if (typeof window === 'undefined') {
   try {
-    console.log('Server-side initialization of Supabase storage...');
-    initializeSupabaseStorage();
+    console.log('Server-side initialization of Supabase storage buckets...');
+    // Use this pattern to ensure the promise is handled
+    initializeSupabaseStorage().then(() => {
+      console.log('Supabase storage buckets initialized successfully');
+    }).catch((error) => {
+      console.error('Failed to initialize Supabase storage buckets:', error);
+    });
   } catch (error) {
-    console.error('Failed to initialize Supabase storage:', error);
+    console.error('Error during Supabase storage initialization:', error);
   }
 }
 

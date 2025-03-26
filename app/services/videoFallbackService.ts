@@ -15,13 +15,28 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
 // Promisify exec for async/await usage
 const execAsync = promisify(exec);
 
-// Define paths for temporary files - use /tmp for Vercel
+// Define paths for temporary files - use /tmp for serverless
 const TMP_DIR = process.env.NODE_ENV === 'production' 
   ? '/tmp' 
   : os.tmpdir();
 
 // Flag for checking if we're in a serverless environment
-const IS_SERVERLESS = process.env.VERCEL === '1';
+const IS_SERVERLESS = process.env.VERCEL === '1' || process.env.NETLIFY === '1';
+
+// Flag to check if we're in a Docker environment (which means we have system FFmpeg)
+const HAS_SYSTEM_FFMPEG = process.env.NODE_ENV === 'production' && !IS_SERVERLESS;
+
+// Check if system FFmpeg is available
+async function isSystemFFmpegAvailable(): Promise<boolean> {
+  try {
+    await execAsync('ffmpeg -version');
+    console.log('System FFmpeg is available');
+    return true;
+  } catch (error) {
+    console.log('System FFmpeg is not available:', error);
+    return false;
+  }
+}
 
 // Define proper types for the module
 interface VideoRenderParams {
@@ -457,9 +472,29 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
  * This won't work in serverless, but we'll attempt it in non-serverless environments
  */
 async function createSimpleSlideshowFromScript(outputPath: string, script: string, audioPath: string): Promise<void> {
-  // This is a placeholder - in serverless we will always fall back to audio-only
-  // In non-serverless environments, you'd use native FFmpeg here
-  throw new Error('Not implemented in serverless environments');
+  if (await isSystemFFmpegAvailable()) {
+    try {
+      console.log('Using system FFmpeg to create slideshow');
+      // Create a simple colored background with text
+      const tmpDir = path.dirname(outputPath);
+      const slidePath = path.join(tmpDir, 'slide.png');
+      
+      // Use FFmpeg to create a blue background
+      await execAsync(`ffmpeg -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 ${slidePath}`);
+      
+      // Use FFmpeg to create video from image and audio
+      await execAsync(`ffmpeg -loop 1 -i ${slidePath} -i ${audioPath} -c:v libx264 -c:a aac -b:a 192k -shortest -pix_fmt yuv420p ${outputPath}`);
+      
+      console.log('Slideshow created successfully with system FFmpeg');
+      return;
+    } catch (error) {
+      console.error('Error using system FFmpeg:', error);
+      throw new Error(`System FFmpeg error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  
+  // If we get here, we don't have system FFmpeg
+  throw new Error('Not implemented in serverless environments without Docker');
 }
 
 /**
@@ -515,4 +550,37 @@ async function uploadToSupabase(
     console.error('Error in uploadToSupabase:', err);
     throw err;
   }
+}
+
+// Add this function to handle audio file combination with system FFmpeg
+export async function combineAudioFilesWithSystemFFmpeg(
+  audioChunkPaths: string[], 
+  outputPath: string
+): Promise<void> {
+  if (await isSystemFFmpegAvailable()) {
+    try {
+      console.log('Using system FFmpeg to combine audio files');
+      
+      // Create a text file listing all input files
+      const tmpDir = path.dirname(outputPath);
+      const inputListPath = path.join(tmpDir, 'audio_files.txt');
+      
+      const fileList = audioChunkPaths
+        .map(filePath => `file '${filePath.replace(/'/g, "\\'")}'`)
+        .join('\n');
+      
+      fs.writeFileSync(inputListPath, fileList);
+      
+      // Use FFmpeg to concatenate the files
+      await execAsync(`ffmpeg -f concat -safe 0 -i ${inputListPath} -c copy ${outputPath}`);
+      
+      console.log('Audio files combined successfully with system FFmpeg');
+      return;
+    } catch (error) {
+      console.error('Error combining audio files with system FFmpeg:', error);
+      throw new Error(`Failed to combine audio files: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  
+  throw new Error('FFmpeg is not available for audio file combination');
 }

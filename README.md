@@ -178,6 +178,59 @@ Before deploying to Vercel, you'll need:
   - If available, it generates videos with audio
   - If not available, it generates audio files only
 
+## Deployment Options
+
+### Vercel Deployment
+
+When deploying to Vercel, note that:
+- FFmpeg is not available by default in the serverless environment
+- The application will fall back to audio-only mode
+- Video generation will be limited
+
+### Netlify with Docker Deployment (Recommended)
+
+For full video generation capabilities, we recommend deploying to Netlify using the provided Docker configuration:
+
+1. **Prerequisites**
+   - Netlify account with build minutes available
+   - Same environment variables as described in the Vercel deployment section
+
+2. **Deployment Steps**
+   - Push your code with the Dockerfile and netlify.toml to your GitHub repository
+   - Connect your repository to Netlify
+   - Netlify will automatically detect the Docker configuration and use it
+   - This provides full FFmpeg support for video generation
+
+3. **Benefits of Docker Deployment**
+   - Full FFmpeg support for video processing
+   - Longer function execution times
+   - More control over the execution environment
+   - Complete video generation capabilities
+
+4. **Verify FFmpeg Installation**
+   - The build process includes an automatic FFmpeg verification step
+   - You can check the build logs to confirm FFmpeg is working correctly
+   - You can also check the Function Logs in Netlify to see FFmpeg operations
+
+### Docker Local Development
+
+You can also use Docker for local development to ensure your environment matches production:
+
+1. **Build the Docker image**
+   ```bash
+   docker build -t lockin-app .
+   ```
+
+2. **Run the container**
+   ```bash
+   docker run -p 3000:3000 -e NODE_ENV=production lockin-app
+   ```
+
+3. **Test FFmpeg**
+   ```bash
+   docker exec -it <container_id> npm run check-ffmpeg
+   ```
+
 ## Technical Considerations
 
 ### Serverless Limitations

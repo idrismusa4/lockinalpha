@@ -1,0 +1,33 @@
+[build]
+  command = "echo 'Using Docker image instead of standard build'"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "18"
+  NEXT_TELEMETRY_DISABLED = "1"
+
+[dev]
+  command = "npm run dev"
+  port = 3000
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Tell Netlify to use our Docker image
+[build.image]
+  dockerfile = "./Dockerfile"
+
+# Increase function timeouts for video processing
+[functions]
+  node_bundler = "esbuild"
+  included_files = ["**/*.wasm"]
+
+[functions."api/*"]
+  included_files = ["**/*.wasm", "node_modules/@ffmpeg/core/**"]
+  node_bundler = "esbuild"
+  external_node_modules = ["@ffmpeg/ffmpeg", "@ffmpeg/util"]
+  
+[functions."api/generateVideo/*"]
+  timeout = 300
+  memory = 3008 

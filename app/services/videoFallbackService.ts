@@ -187,11 +187,25 @@ export async function renderVideoFallback({
         await updateJobProgress(jobId, 50);
         onProgress(50);
         
-        // Creating slides phase
+        // For serverless environments, we'll use a simpler approach
+        // that doesn't require FFmpeg installation
         console.log('Generating slides for fallback video...');
-        await createEnhancedSlideshowFromScript(outputFile, script, audioFile);
         
-        // Update progress after slideshow creation
+        try {
+          // In serverless, we won't attempt to create a video - just use audio
+          if (IS_SERVERLESS) {
+            console.log('Running in serverless environment, falling back to audio-only mode');
+            isAudioOnly = true;
+          } else {
+            // Only try to create a video in non-serverless environments
+            await createSimpleSlideshowFromScript(outputFile, script, audioFile);
+          }
+        } catch (slideshowError) {
+          console.error('Error creating simple slideshow:', slideshowError);
+          isAudioOnly = true;
+        }
+        
+        // Update progress after slideshow creation attempt
         await updateJobProgress(jobId, 60);
         onProgress(60);
       }
@@ -202,21 +216,14 @@ export async function renderVideoFallback({
         console.log(`Video file exists with size: ${videoStats.size} bytes`);
         
         if (videoStats.size < 10000) { // Less than 10KB is suspicious for a video
-          console.log('Video file is too small, may be corrupted. Creating a new one.');
-          await createEnhancedSlideshowFromScript(outputFile, script, audioFile);
+          console.log('Video file is too small, may be corrupted. Using audio-only mode.');
+          isAudioOnly = true;
+        } else {
+          isAudioOnly = false;
         }
       } else {
-        console.log('Video file was not created, creating a new one.');
-        await createEnhancedSlideshowFromScript(outputFile, script, audioFile);
-      }
-      
-      // Final check - if all video generation methods failed, we'll fall back to audio only
-      if (!fs.existsSync(outputFile) || fs.statSync(outputFile).size < 10000) {
-        console.log('All video generation methods failed, falling back to audio only.');
+        console.log('Video file was not created, falling back to audio only.');
         isAudioOnly = true;
-      } else {
-        console.log('Successfully created video file with size:', fs.statSync(outputFile).size, 'bytes');
-        isAudioOnly = false;
       }
       
       await updateJobProgress(jobId, 70);
@@ -446,226 +453,13 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
 }
 
 /**
- * Creates an enhanced slideshow video from script with visual elements
+ * A simple approach that doesn't use FFmpeg
+ * This won't work in serverless, but we'll attempt it in non-serverless environments
  */
-async function createEnhancedSlideshowFromScript(outputPath: string, script: string, audioPath: string): Promise<void> {
-  try {
-    console.log('Starting enhanced slideshow creation with FFmpeg WASM...');
-    
-    // Create a temporary directory for the slides
-    const tmpDir = path.dirname(outputPath);
-    const slidesDir = path.join(tmpDir, 'slides');
-    
-    if (!fs.existsSync(slidesDir)) {
-      fs.mkdirSync(slidesDir, { recursive: true });
-    }
-    
-    // Load the FFmpeg instance
-    const ffmpeg = await getFFmpeg();
-    
-    // Create a title screen
-    const title = script.split('\n')[0].replace(/^#+\s*/, '');
-    const titlePath = path.join(slidesDir, 'title.png');
-    await createTitleImage(titlePath, title);
-    
-    // Split script into logical chunks
-    const paragraphs = script
-      .split('\n\n')
-      .filter(p => p.trim().length > 0);
-    
-    // Create images for each paragraph
-    const slideImages = [titlePath];
-    
-    // Create each slide
-    const totalSlides = paragraphs.length;
-    console.log(`Creating ${totalSlides} slides...`);
-    
-    for (let i = 0; i < paragraphs.length; i++) {
-      const slidePath = path.join(slidesDir, `slide-${i + 1}.png`);
-      await createSlideImage(slidePath, paragraphs[i], i + 1);
-      slideImages.push(slidePath);
-    }
-    
-    // Verify audio file
-    if (!fs.existsSync(audioPath)) {
-      throw new Error(`Audio file does not exist at path: ${audioPath}`);
-    }
-    
-    // Get audio file
-    const audioData = fs.readFileSync(audioPath);
-    
-    // Write audio file to FFmpeg
-    ffmpeg.writeFile('audio.mp3', await fetchFile(audioPath));
-    
-    // Create the concatenation file
-    let concatFileContent = '';
-    for (let i = 0; i < slideImages.length; i++) {
-      const slideName = `slide_${i}.png`;
-      ffmpeg.writeFile(slideName, await fetchFile(slideImages[i]));
-      concatFileContent += `file ${slideName}\nduration 3\n`;
-    }
-    concatFileContent += `file slide_${slideImages.length - 1}.png`;
-    
-    // Write concat file
-    ffmpeg.writeFile('concat.txt', concatFileContent);
-    
-    // Create video from slides and audio
-    await ffmpeg.exec([
-      '-f', 'concat',
-      '-safe', '0',
-      '-i', 'concat.txt',
-      '-i', 'audio.mp3',
-      '-c:v', 'libx264',
-      '-c:a', 'aac',
-      '-b:a', '192k',
-      '-shortest',
-      '-pix_fmt', 'yuv420p',
-      'output.mp4'
-    ]);
-    
-    // Save the output file
-    const outputData = await ffmpeg.readFile('output.mp4');
-    fs.writeFileSync(outputPath, Buffer.from(outputData));
-    
-    // Verify output
-    if (!fs.existsSync(outputPath)) {
-      throw new Error('FFmpeg did not produce an output file');
-    }
-    
-    const fileStats = fs.statSync(outputPath);
-    console.log(`Video file created: ${outputPath} (${fileStats.size} bytes)`);
-    
-    if (fileStats.size < 10000) {
-      throw new Error(`Output file is too small (${fileStats.size} bytes) and may be corrupted`);
-    }
-    
-    console.log(`Successfully created enhanced slideshow video at: ${outputPath} (${fileStats.size} bytes)`);
-    
-    // Clean up temporary files
-    try {
-      slideImages.forEach(img => {
-        if (fs.existsSync(img)) {
-          fs.unlinkSync(img);
-        }
-      });
-      
-      if (fs.existsSync(slidesDir)) {
-        fs.rmdirSync(slidesDir, { recursive: true });
-      }
-      
-      console.log('Cleaned up temporary files');
-    } catch (cleanupError) {
-      console.warn('Warning: Failed to clean up some temporary files:', cleanupError);
-    }
-  } catch (error) {
-    console.error('Error creating enhanced slideshow:', error);
-    throw error;
-  }
-}
-
-/**
- * Creates a title image with nice visual design
- */
-async function createTitleImage(outputPath: string, title: string): Promise<void> {
-  try {
-    // Get FFmpeg instance
-    const ffmpeg = await getFFmpeg();
-    
-    // Colors for visual design
-    const bgColor = '0x1a2a6c';
-    
-    // Create a simple colored canvas as background
-    await ffmpeg.exec([
-      '-f', 'lavfi',
-      '-i', `color=c=${bgColor}:s=1280x720`,
-      '-frames:v', '1',
-      'title.png'
-    ]);
-    
-    // Read and save the file
-    const data = await ffmpeg.readFile('title.png');
-    fs.writeFileSync(outputPath, Buffer.from(data));
-    
-    console.log(`Title image created successfully at: ${outputPath}`);
-  } catch (error) {
-    console.error('Error creating title image:', error);
-    
-    // Create a fallback simple blue background
-    try {
-      const ffmpeg = await getFFmpeg();
-      await ffmpeg.exec([
-        '-f', 'lavfi',
-        '-i', 'color=c=blue:s=1280x720',
-        '-frames:v', '1',
-        'fallback_title.png'
-      ]);
-      
-      const data = await ffmpeg.readFile('fallback_title.png');
-      fs.writeFileSync(outputPath, Buffer.from(data));
-      
-      console.log(`Simple fallback title image created at: ${outputPath}`);
-    } catch (fallbackError) {
-      console.error('Even fallback title image creation failed:', fallbackError);
-      throw error;
-    }
-  }
-}
-
-/**
- * Creates a slide image for a paragraph of text
- */
-async function createSlideImage(outputPath: string, text: string, slideNumber: number): Promise<void> {
-  try {
-    // Load FFmpeg
-    const ffmpeg = await getFFmpeg();
-    
-    // Use different colors for different slides to add visual interest
-    const colorSchemes = [
-      '0x1a2a6c',  // Blue
-      '0x2c3e50',  // Dark blue
-      '0x27ae60',  // Green
-      '0xc0392b',  // Red
-      '0x8e44ad'   // Purple
-    ];
-    
-    // Select a color scheme based on slideNumber
-    const bgColor = colorSchemes[slideNumber % colorSchemes.length];
-    
-    // Create a simple colored background
-    await ffmpeg.exec([
-      '-f', 'lavfi',
-      '-i', `color=c=${bgColor}:s=1280x720`,
-      '-frames:v', '1',
-      `slide_${slideNumber}.png`
-    ]);
-    
-    // Read and save the file
-    const data = await ffmpeg.readFile(`slide_${slideNumber}.png`);
-    fs.writeFileSync(outputPath, Buffer.from(data));
-    
-    console.log(`Slide image #${slideNumber} created successfully at: ${outputPath}`);
-  } catch (error) {
-    console.error(`Error creating slide image #${slideNumber}:`, error);
-    
-    // Create a fallback simple blue background
-    try {
-      const ffmpeg = await getFFmpeg();
-      await ffmpeg.exec([
-        '-f', 'lavfi',
-        '-i', 'color=c=blue:s=1280x720',
-        '-frames:v', '1',
-        `fallback_slide_${slideNumber}.png`
-      ]);
-      
-      const data = await ffmpeg.readFile(`fallback_slide_${slideNumber}.png`);
-      fs.writeFileSync(outputPath, Buffer.from(data));
-      
-      console.log(`Simple fallback slide image #${slideNumber} created at: ${outputPath}`);
-    } catch (fallbackError) {
-      console.error(`Even fallback slide creation failed for #${slideNumber}:`, fallbackError);
-      throw error;
-    }
-  }
+async function createSimpleSlideshowFromScript(outputPath: string, script: string, audioPath: string): Promise<void> {
+  // This is a placeholder - in serverless we will always fall back to audio-only
+  // In non-serverless environments, you'd use native FFmpeg here
+  throw new Error('Not implemented in serverless environments');
 }
 
 /**

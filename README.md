@@ -215,16 +215,23 @@ For improved video generation capabilities, we recommend deploying to Netlify:
      - Publish directory: `.next`
    - Deploy the site
 
-3. **How it Works**
-   - The application includes a post-install script that attempts to set up FFmpeg in the Netlify Functions environment
-   - The code will detect if FFmpeg is available and use it when possible
-   - If FFmpeg is not available, it will fall back to audio-only mode
-   - Netlify Functions have longer execution times than Vercel, which helps with audio processing
+3. **Enhanced FFmpeg Support**
+   - The application now includes a custom FFmpeg plugin for Netlify
+   - The plugin will attempt to download and install FFmpeg during the build process
+   - The `netlify.toml` configuration file specifies longer function timeouts to accommodate video processing
+   - Function bundling is configured to include WebAssembly and FFmpeg modules
 
-4. **Verify Installation**
+4. **How it Works**
+   - The Netlify plugin runs during the build process and attempts to set up FFmpeg
+   - The application has multiple fallback mechanisms:
+     1. First attempts to use system FFmpeg if available in the Netlify environment
+     2. Falls back to WebAssembly-based FFmpeg if system FFmpeg is not available
+     3. As a last resort, falls back to audio-only mode
+
+5. **Verify Installation**
    - After deployment, create a new video in your application
-   - Check the function logs in Netlify to see if FFmpeg was detected
-   - You may see audio-only mode if FFmpeg couldn't be installed in the Netlify environment
+   - Check the function logs in Netlify to see detailed information about which FFmpeg approach was used
+   - If you see messages like "Using system FFmpeg", it means the plugin successfully installed FFmpeg
 
 ### Docker Local Development
 

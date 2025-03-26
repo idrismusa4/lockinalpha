@@ -6,7 +6,7 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import EnhancedAudioPlayer from './EnhancedAudioPlayer';
-import { mightHaveCorsIssues } from '@/app/utils/cors-proxy';
+import { mightHaveCorsIssues } from '../utils/cors-proxy';
 
 interface VideoPlayerProps {
   audioUrl: string;

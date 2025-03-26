@@ -1,5 +1,3 @@
-'use server';
-
 /**
  * This utility helps proxy requests to media files that might have CORS issues
  */

@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
-import { mightHaveCorsIssues } from '@/app/utils/cors-proxy';
+import { mightHaveCorsIssues } from '../utils/cors-proxy';
 
 interface EnhancedAudioPlayerProps {
   src: string;

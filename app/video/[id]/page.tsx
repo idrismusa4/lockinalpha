@@ -1,6 +1,6 @@
 import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
-import ClientSideVideoPlayer from '@/components/ClientSideVideoPlayer';
+import ClientSideVideoPlayer from '../../components/ClientSideVideoPlayer';
 import { supabase } from '@/app/supabase';
 import { Loader2 } from 'lucide-react';
 import { mightHaveCorsIssues } from '@/app/utils/cors-proxy';

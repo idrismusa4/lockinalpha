@@ -25,6 +25,7 @@ try {
   // Make sure the bin directory exists
   if (!fs.existsSync(binDir)) {
     fs.mkdirSync(binDir, { recursive: true });
+    console.log(`Created bin directory at ${binDir}`);
   }
   
   // Check if the FFmpeg binary exists and is executable
@@ -48,11 +49,30 @@ fi
     console.log(`Created FFmpeg wrapper script at ${ffmpegBin}`);
   } else {
     console.log(`FFmpeg binary already exists at ${ffmpegBin}`);
+    // Make sure it's executable
+    fs.chmodSync(ffmpegBin, '755');
+  }
+  
+  // Try to find the functions directory
+  let functionsDir = null;
+  const possibleFunctionDirs = [
+    path.join(netlifyDir, 'functions-internal'),
+    path.join(netlifyDir, 'functions'),
+    path.join(process.cwd(), '.netlify', 'functions-internal'),
+    path.join(process.cwd(), '.netlify', 'functions'),
+    path.join(process.env.NETLIFY_BUILD_BASE || '', '.netlify', 'functions-internal')
+  ];
+  
+  for (const dir of possibleFunctionDirs) {
+    if (fs.existsSync(dir)) {
+      functionsDir = dir;
+      console.log(`Found functions directory at: ${functionsDir}`);
+      break;
+    }
   }
   
   // Set the NETLIFY_FFMPEG_PATH environment variable in functions
-  const functionsDir = path.join(netlifyDir, 'functions-internal');
-  if (fs.existsSync(functionsDir)) {
+  if (functionsDir) {
     const envFile = path.join(functionsDir, '.env');
     
     // Create or update the .env file
@@ -69,7 +89,13 @@ fi
       console.log('NETLIFY_FFMPEG_PATH already set in environment');
     }
   } else {
-    console.log('Netlify functions directory not found. Environment will need to be set elsewhere.');
+    console.log('Netlify functions directory not found. Will create environment backup file.');
+    
+    // Create a backup file that can be sourced later
+    const backupEnvFile = path.join(netlifyDir, 'ffmpeg-env.sh');
+    fs.writeFileSync(backupEnvFile, `export NETLIFY_FFMPEG_PATH=${ffmpegBin}\n`);
+    fs.chmodSync(backupEnvFile, '755');
+    console.log(`Created backup environment file at ${backupEnvFile}`);
   }
   
   console.log('Netlify function environment fix completed.');

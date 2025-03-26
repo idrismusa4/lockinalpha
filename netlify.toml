@@ -1,5 +1,5 @@
 [build]
-  command = "npm run build"
+  command = "node scripts/netlify-post-install.js && npm run build && node scripts/fix-netlify-functions.js"
   publish = ".next"
   ignore = "git diff --quiet HEAD^ HEAD ./app/"
 
@@ -29,10 +29,6 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
-
-# Our custom plugin for FFmpeg setup
-[[plugins]]
-  package = "./plugins/netlify-ffmpeg-plugin"
 
 # Docker configuration for local development
 [dev]

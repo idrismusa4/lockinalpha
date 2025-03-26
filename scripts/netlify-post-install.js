@@ -12,7 +12,8 @@ const { execSync } = require('child_process');
 const https = require('https');
 const { createWriteStream } = require('fs');
 
-console.log('Starting Netlify post-install script for FFmpeg support...');
+console.log('Starting Netlify FFmpeg setup script...');
+console.log('Current working directory:', process.cwd());
 
 // Helper function to safely execute commands
 function safeExec(command) {
@@ -63,13 +64,21 @@ async function setupFFmpeg() {
   try {
     console.log('Checking current environment...');
     console.log(`Platform: ${os.platform()}, Architecture: ${os.arch()}`);
+    console.log('OS Release:', os.release());
+    console.log('Node version:', process.version);
     
     // Create the .netlify bin directory if it doesn't exist
     const netlifyDir = path.join(process.cwd(), '.netlify');
     const binDir = path.join(netlifyDir, 'bin');
     
+    if (!fs.existsSync(netlifyDir)) {
+      fs.mkdirSync(netlifyDir, { recursive: true });
+      console.log(`Created .netlify directory at ${netlifyDir}`);
+    }
+    
     if (!fs.existsSync(binDir)) {
       fs.mkdirSync(binDir, { recursive: true });
+      console.log(`Created bin directory at ${binDir}`);
     }
     
     // Create a function to check if ffmpeg exists and is executable
@@ -97,6 +106,8 @@ async function setupFFmpeg() {
         
         // Find the ffmpeg binary in the extracted folder
         const extractedDirs = fs.readdirSync(extractDir);
+        console.log('Extracted contents:', extractedDirs);
+        
         if (extractedDirs.length > 0) {
           const ffmpegDir = path.join(extractDir, extractedDirs[0]);
           const ffmpegBin = path.join(ffmpegDir, 'ffmpeg');
@@ -106,10 +117,27 @@ async function setupFFmpeg() {
             fs.copyFileSync(ffmpegBin, ffmpegTargetPath);
             fs.chmodSync(ffmpegTargetPath, '755'); // Make executable
             console.log(`FFmpeg binary copied to ${ffmpegTargetPath}`);
+            
+            // Verify it's working
+            try {
+              const version = safeExec(`${ffmpegTargetPath} -version`);
+              if (version) {
+                console.log('FFmpeg version verified:', version.split('\n')[0]);
+              }
+            } catch (verifyError) {
+              console.error('Error verifying FFmpeg:', verifyError);
+            }
+          } else {
+            console.error(`FFmpeg binary not found at expected path: ${ffmpegBin}`);
+            console.log('Contents of extracted directory:', fs.readdirSync(ffmpegDir));
           }
+        } else {
+          console.error('No directories found in extracted archive');
         }
       } else {
-        console.log('FFmpeg binary already exists');
+        console.log('FFmpeg binary already exists at', ffmpegTargetPath);
+        // Make sure it's executable
+        fs.chmodSync(ffmpegTargetPath, '755');
       }
     } catch (downloadError) {
       console.error('Error downloading or extracting FFmpeg:', downloadError);
@@ -130,53 +158,7 @@ fi
 `;
       fs.writeFileSync(ffmpegTargetPath, shScript);
       fs.chmodSync(ffmpegTargetPath, '755'); // Make executable
-    }
-    
-    // Set environment variables for the functions
-    try {
-      // Make sure the functions-internal directory exists
-      const functionsDir = path.join(netlifyDir, 'functions-internal');
-      if (!fs.existsSync(functionsDir)) {
-        // If it doesn't exist, we might be in a different phase of the build
-        console.log('Functions directory not available yet. Environment will be set up later.');
-        
-        // Instead, create a setup script in the .netlify directory
-        const setupScript = path.join(netlifyDir, 'setup-ffmpeg.sh');
-        const scriptContent = `#!/bin/bash
-# This script will be run by Netlify to set up FFmpeg environment
-FFMPEG_PATH="${ffmpegTargetPath}"
-ENV_FILE="\${NETLIFY_BUILD_BASE}/.netlify/functions-internal/.env"
-
-# Ensure .env file exists
-touch "\${ENV_FILE}"
-
-# Add NETLIFY_FFMPEG_PATH to the environment
-if ! grep -q "NETLIFY_FFMPEG_PATH" "\${ENV_FILE}"; then
-  echo "NETLIFY_FFMPEG_PATH=\${FFMPEG_PATH}" >> "\${ENV_FILE}"
-  echo "Added NETLIFY_FFMPEG_PATH to functions environment"
-fi
-`;
-        fs.writeFileSync(setupScript, scriptContent);
-        fs.chmodSync(setupScript, '755');
-        console.log(`Created setup script at ${setupScript}`);
-      } else {
-        // Set environment variables directly
-        const envFile = path.join(functionsDir, '.env');
-        let envContent = '';
-        
-        if (fs.existsSync(envFile)) {
-          envContent = fs.readFileSync(envFile, 'utf8');
-        }
-        
-        // Add FFmpeg path env variable if not already present
-        if (!envContent.includes('NETLIFY_FFMPEG_PATH')) {
-          console.log(`Setting NETLIFY_FFMPEG_PATH to: ${ffmpegTargetPath}`);
-          fs.appendFileSync(envFile, `\nNETLIFY_FFMPEG_PATH=${ffmpegTargetPath}\n`);
-          console.log('Environment variable added to functions runtime');
-        }
-      }
-    } catch (envError) {
-      console.error('Error setting environment variables:', envError);
+      console.log('Created FFmpeg wrapper script');
     }
     
     console.log('FFmpeg setup for Netlify completed successfully.');
@@ -188,9 +170,9 @@ fi
 
 // Run the setup function
 setupFFmpeg().then(() => {
-  console.log('Netlify post-install script completed.');
+  console.log('Netlify FFmpeg setup script completed.');
   process.exit(0);
 }).catch(error => {
-  console.error('Error in post-install script:', error);
+  console.error('Error in FFmpeg setup script:', error);
   process.exit(1);
 }); 

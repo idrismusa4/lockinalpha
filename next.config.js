@@ -5,6 +5,13 @@ const nextConfig = {
   },
   // Configure webpack to handle problematic packages
   webpack: (config, { isServer }) => {
+    // Enable WebAssembly
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+      layers: true,
+    };
+
     // Handle esbuild issue
     config.resolve.alias = {
       ...config.resolve.alias,
@@ -65,11 +72,9 @@ const nextConfig = {
   // External packages for serverless environment
   experimental: {
     serverComponentsExternalPackages: [
-      'ffmpeg-static', 
-      'fluent-ffmpeg', 
       'pdf.js-extract',
-      '@ffmpeg-installer/ffmpeg',
-      '@ffmpeg-installer/ffprobe'
+      '@ffmpeg/ffmpeg',
+      '@ffmpeg/util'
     ],
   },
   // Optionally increase memory limit for builds if needed
@@ -103,6 +108,24 @@ const nextConfig = {
   distDir: '.next',
   // Minimize output to reduce file operations
   output: 'standalone',
+  // Required for serving wasm files
+  headers: async () => {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'Cross-Origin-Embedder-Policy',
+            value: 'require-corp',
+          },
+          {
+            key: 'Cross-Origin-Opener-Policy',
+            value: 'same-origin',
+          },
+        ],
+      },
+    ];
+  },
 };
 
 module.exports = nextConfig;

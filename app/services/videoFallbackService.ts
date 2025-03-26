@@ -9,11 +9,8 @@ import { updateJobStatus, updateJobProgress } from './jobService';
 import { convertScriptToSpeech } from './awsPollyService';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import ffmpeg from '@ffmpeg-installer/ffmpeg';
-import ffprobe from '@ffmpeg-installer/ffprobe';
-
-// No direct import of Remotion packages at the top level
-// These will be dynamically imported in the tryRemotionRender function
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
 // Promisify exec for async/await usage
 const execAsync = promisify(exec);
@@ -94,6 +91,35 @@ type RemotionRendererType = {
   }>;
 };
 
+// Initialize FFmpeg instance
+let ffmpegInstance: FFmpeg | null = null;
+
+/**
+ * Creates and loads an FFmpeg instance with proper configuration
+ */
+async function getFFmpeg(): Promise<FFmpeg> {
+  if (ffmpegInstance) {
+    return ffmpegInstance;
+  }
+
+  try {
+    ffmpegInstance = new FFmpeg();
+    
+    // Load FFmpeg core and codecs
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+    await ffmpegInstance.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    });
+    
+    console.log('FFmpeg WASM loaded successfully');
+    return ffmpegInstance;
+  } catch (error) {
+    console.error('Error loading FFmpeg:', error);
+    throw new Error('Failed to load FFmpeg WASM');
+  }
+}
+
 /**
  * A fallback video rendering service that creates a video using
  * enhanced visual elements, animations and the LockIn branding
@@ -143,12 +169,9 @@ export async function renderVideoFallback({
       throw new Error(`Failed to generate audio: ${audioError instanceof Error ? audioError.message : String(audioError)}`);
     }
     
-    // In a serverless environment, we might not have FFmpeg available
-    // But we'll still try to create a video using Remotion
+    // Always attempt to create a video
     let isAudioOnly = false;
     
-    // ALWAYS attempt to create a video file, even if FFmpeg isn't available
-    // We'll use our Remotion renderer which doesn't require FFmpeg
     console.log('Creating enhanced video with animations...');
     try {
       // First try to use the Remotion renderer
@@ -426,16 +449,19 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
  * Creates an enhanced slideshow video from script with visual elements
  */
 async function createEnhancedSlideshowFromScript(outputPath: string, script: string, audioPath: string): Promise<void> {
-  // Create a temporary directory for the slides
-  const tmpDir = path.dirname(outputPath);
-  const slidesDir = path.join(tmpDir, 'slides');
-  
-  if (!fs.existsSync(slidesDir)) {
-    fs.mkdirSync(slidesDir, { recursive: true });
-  }
-  
   try {
-    console.log('Starting enhanced slideshow creation...');
+    console.log('Starting enhanced slideshow creation with FFmpeg WASM...');
+    
+    // Create a temporary directory for the slides
+    const tmpDir = path.dirname(outputPath);
+    const slidesDir = path.join(tmpDir, 'slides');
+    
+    if (!fs.existsSync(slidesDir)) {
+      fs.mkdirSync(slidesDir, { recursive: true });
+    }
+    
+    // Load the FFmpeg instance
+    const ffmpeg = await getFFmpeg();
     
     // Create a title screen
     const title = script.split('\n')[0].replace(/^#+\s*/, '');
@@ -450,7 +476,7 @@ async function createEnhancedSlideshowFromScript(outputPath: string, script: str
     // Create images for each paragraph
     const slideImages = [titlePath];
     
-    // Create each slide - reporting progress as we go
+    // Create each slide
     const totalSlides = paragraphs.length;
     console.log(`Creating ${totalSlides} slides...`);
     
@@ -460,57 +486,48 @@ async function createEnhancedSlideshowFromScript(outputPath: string, script: str
       slideImages.push(slidePath);
     }
     
-    // Use FFmpeg to create a slideshow video with the audio
-    console.log('Creating improved slideshow video with FFmpeg...');
-    
-    // Check if audio file exists and has content
+    // Verify audio file
     if (!fs.existsSync(audioPath)) {
       throw new Error(`Audio file does not exist at path: ${audioPath}`);
     }
     
-    // Get audio duration using ffprobe
-    const { stdout: durationOutput } = await execAsync(`"${ffprobe.path}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`);
-    const audioDuration = parseFloat(durationOutput);
-    console.log(`Audio duration: ${audioDuration} seconds`);
+    // Get audio file
+    const audioData = fs.readFileSync(audioPath);
     
-    if (isNaN(audioDuration) || audioDuration <= 0) {
-      throw new Error('Invalid audio duration detected. Cannot create video.');
+    // Write audio file to FFmpeg
+    ffmpeg.writeFile('audio.mp3', await fetchFile(audioPath));
+    
+    // Create the concatenation file
+    let concatFileContent = '';
+    for (let i = 0; i < slideImages.length; i++) {
+      const slideName = `slide_${i}.png`;
+      ffmpeg.writeFile(slideName, await fetchFile(slideImages[i]));
+      concatFileContent += `file ${slideName}\nduration 3\n`;
     }
+    concatFileContent += `file slide_${slideImages.length - 1}.png`;
     
-    // Create a file with the list of images and their durations
-    const imageListPath = path.join(tmpDir, 'images.txt');
+    // Write concat file
+    ffmpeg.writeFile('concat.txt', concatFileContent);
     
-    // Calculate slide duration - ensure it's reasonable based on audio length
-    const slideCount = slideImages.length;
-    const slideDuration = Math.max(3, Math.min(10, audioDuration / slideCount));
+    // Create video from slides and audio
+    await ffmpeg.exec([
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', 'concat.txt',
+      '-i', 'audio.mp3',
+      '-c:v', 'libx264',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-shortest',
+      '-pix_fmt', 'yuv420p',
+      'output.mp4'
+    ]);
     
-    console.log(`Using ${slideDuration.toFixed(2)} seconds per slide for ${slideCount} slides`);
+    // Save the output file
+    const outputData = await ffmpeg.readFile('output.mp4');
+    fs.writeFileSync(outputPath, Buffer.from(outputData));
     
-    // Create the image list with proper durations
-    const imageListContent = slideImages
-      .map((img, index) => {
-        // Last slide needs special handling
-        if (index === slideImages.length - 1) {
-          return `file '${img.replace(/'/g, "'\\''")}'\nduration ${slideDuration}`;
-        }
-        return `file '${img.replace(/'/g, "'\\''")}'\nduration ${slideDuration}`;
-      })
-      .join('\n');
-    
-    fs.writeFileSync(imageListPath, imageListContent);
-    console.log('Created image list file for FFmpeg');
-    
-    // Create a more robust FFmpeg command with explicit audio mapping
-    const ffmpegCmd = `"${ffmpeg.path}" -f concat -safe 0 -i "${imageListPath}" -i "${audioPath}" -map 0:v -map 1:a -vf "fps=24,format=yuv420p" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -shortest -pix_fmt yuv420p -t ${audioDuration} "${outputPath}"`;
-    
-    console.log(`Executing FFmpeg command: ${ffmpegCmd}`);
-    const { stdout, stderr } = await execAsync(ffmpegCmd);
-    
-    if (stderr) {
-      console.log('FFmpeg stderr output:', stderr);
-    }
-    
-    // Verify the output file
+    // Verify output
     if (!fs.existsSync(outputPath)) {
       throw new Error('FFmpeg did not produce an output file');
     }
@@ -518,13 +535,13 @@ async function createEnhancedSlideshowFromScript(outputPath: string, script: str
     const fileStats = fs.statSync(outputPath);
     console.log(`Video file created: ${outputPath} (${fileStats.size} bytes)`);
     
-    if (fileStats.size < 10000) { // Less than 10KB is suspicious
+    if (fileStats.size < 10000) {
       throw new Error(`Output file is too small (${fileStats.size} bytes) and may be corrupted`);
     }
     
     console.log(`Successfully created enhanced slideshow video at: ${outputPath} (${fileStats.size} bytes)`);
     
-    // Clean up the temporary files
+    // Clean up temporary files
     try {
       slideImages.forEach(img => {
         if (fs.existsSync(img)) {
@@ -532,18 +549,14 @@ async function createEnhancedSlideshowFromScript(outputPath: string, script: str
         }
       });
       
-      if (fs.existsSync(imageListPath)) {
-        fs.unlinkSync(imageListPath);
-      }
-      
       if (fs.existsSync(slidesDir)) {
         fs.rmdirSync(slidesDir, { recursive: true });
       }
+      
       console.log('Cleaned up temporary files');
     } catch (cleanupError) {
       console.warn('Warning: Failed to clean up some temporary files:', cleanupError);
     }
-    
   } catch (error) {
     console.error('Error creating enhanced slideshow:', error);
     throw error;
@@ -555,45 +568,45 @@ async function createEnhancedSlideshowFromScript(outputPath: string, script: str
  */
 async function createTitleImage(outputPath: string, title: string): Promise<void> {
   try {
-    // More thorough sanitization for ffmpeg
-    const sanitizedTitle = title
-      .replace(/['"\\*:]/g, '')  // Remove problematic characters
-      .replace(/[^a-zA-Z0-9\s.,?!()-]/g, '')  // Keep only safe characters
-      .trim()
-      .substr(0, 80); // Limit length to avoid command issues
+    // Get FFmpeg instance
+    const ffmpeg = await getFFmpeg();
     
-    // Create a visually appealing gradient background
-    const bgColor = '#1a2a6c';
-    const gradientColor = '#2a4a9c';
+    // Colors for visual design
+    const bgColor = '0x1a2a6c';
     
-    // Create a gradient effect with boxes instead of text
-    const ffmpegCmd = `"${ffmpeg.path}" -f lavfi -i "color=c=${bgColor}:s=1280x720" -vf "drawbox=x=0:y=0:w=1280:h=720:color=${gradientColor}@0.5:t=fill,drawbox=x=40:y=40:w=1200:h=150:color=${bgColor}@0.7:t=fill,drawbox=x=40:y=250:w=1200:h=100:color=${bgColor}@0.9:t=fill" -frames:v 1 "${outputPath}"`;
+    // Create a simple colored canvas as background
+    await ffmpeg.exec([
+      '-f', 'lavfi',
+      '-i', `color=c=${bgColor}:s=1280x720`,
+      '-frames:v', '1',
+      'title.png'
+    ]);
     
-    console.log('Executing title image command');
-    await execAsync(ffmpegCmd);
-    
-    if (!fs.existsSync(outputPath)) {
-      throw new Error('Failed to create title image');
-    }
+    // Read and save the file
+    const data = await ffmpeg.readFile('title.png');
+    fs.writeFileSync(outputPath, Buffer.from(data));
     
     console.log(`Title image created successfully at: ${outputPath}`);
   } catch (error) {
     console.error('Error creating title image:', error);
     
-    // Fallback method - Create a simpler image if the first method fails
+    // Create a fallback simple blue background
     try {
-      // Create a very simple title image with minimal commands
-      const simpleCmd = `"${ffmpeg.path}" -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
-      await execAsync(simpleCmd);
+      const ffmpeg = await getFFmpeg();
+      await ffmpeg.exec([
+        '-f', 'lavfi',
+        '-i', 'color=c=blue:s=1280x720',
+        '-frames:v', '1',
+        'fallback_title.png'
+      ]);
       
-      if (!fs.existsSync(outputPath)) {
-        throw new Error('Failed to create even a simple title image');
-      }
+      const data = await ffmpeg.readFile('fallback_title.png');
+      fs.writeFileSync(outputPath, Buffer.from(data));
       
       console.log(`Simple fallback title image created at: ${outputPath}`);
     } catch (fallbackError) {
       console.error('Even fallback title image creation failed:', fallbackError);
-      throw error; // Throw the original error
+      throw error;
     }
   }
 }
@@ -603,53 +616,54 @@ async function createTitleImage(outputPath: string, title: string): Promise<void
  */
 async function createSlideImage(outputPath: string, text: string, slideNumber: number): Promise<void> {
   try {
-    // More thorough sanitization for text used in ffmpeg command
-    const sanitizedText = text
-      .substr(0, 150)  // Limit length further to avoid command issues
-      .replace(/['"\\*]/g, '')  // Remove problematic characters
-      .replace(/[\n\r:]/g, ' ')  // Replace newlines and colons with spaces
-      .replace(/[^a-zA-Z0-9\s.,?!()-]/g, '')  // Keep only safe characters
-      .trim();
+    // Load FFmpeg
+    const ffmpeg = await getFFmpeg();
     
     // Use different colors for different slides to add visual interest
     const colorSchemes = [
-      { bg: '#1a2a6c', accent: '#2a3a8c' },  // Blue
-      { bg: '#2c3e50', accent: '#34495e' },  // Dark blue
-      { bg: '#27ae60', accent: '#2ecc71' },  // Green
-      { bg: '#c0392b', accent: '#e74c3c' },  // Red
-      { bg: '#8e44ad', accent: '#9b59b6' }   // Purple
+      '0x1a2a6c',  // Blue
+      '0x2c3e50',  // Dark blue
+      '0x27ae60',  // Green
+      '0xc0392b',  // Red
+      '0x8e44ad'   // Purple
     ];
     
     // Select a color scheme based on slideNumber
-    const scheme = colorSchemes[slideNumber % colorSchemes.length];
+    const bgColor = colorSchemes[slideNumber % colorSchemes.length];
     
-    // Create a visually interesting slide with visual elements instead of text
-    const ffmpegCmd = `"${ffmpeg.path}" -f lavfi -i "color=c=${scheme.bg}:s=1280x720" -vf "drawbox=x=0:y=0:w=1280:h=720:color=${scheme.accent}@0.3:t=fill,drawbox=x=0:y=0:w=1280:h=100:color=${scheme.bg}@0.8:t=fill,drawbox=x=0:y=620:w=1280:h=100:color=${scheme.bg}@0.8:t=fill,drawbox=x=${(slideNumber % 4) * 250 + 100}:y=${200 + (slideNumber % 3) * 100}:w=200:h=200:color=${scheme.accent}@0.6:t=fill" -frames:v 1 "${outputPath}"`;
+    // Create a simple colored background
+    await ffmpeg.exec([
+      '-f', 'lavfi',
+      '-i', `color=c=${bgColor}:s=1280x720`,
+      '-frames:v', '1',
+      `slide_${slideNumber}.png`
+    ]);
     
-    await execAsync(ffmpegCmd);
-    
-    if (!fs.existsSync(outputPath)) {
-      throw new Error(`Failed to create slide image #${slideNumber}`);
-    }
+    // Read and save the file
+    const data = await ffmpeg.readFile(`slide_${slideNumber}.png`);
+    fs.writeFileSync(outputPath, Buffer.from(data));
     
     console.log(`Slide image #${slideNumber} created successfully at: ${outputPath}`);
   } catch (error) {
     console.error(`Error creating slide image #${slideNumber}:`, error);
     
-    // Fallback method - Create a simpler image if the first method fails
+    // Create a fallback simple blue background
     try {
-      // Create a very simple slide image with minimal commands
-      const simpleCmd = `"${ffmpeg.path}" -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
-      await execAsync(simpleCmd);
+      const ffmpeg = await getFFmpeg();
+      await ffmpeg.exec([
+        '-f', 'lavfi',
+        '-i', 'color=c=blue:s=1280x720',
+        '-frames:v', '1',
+        `fallback_slide_${slideNumber}.png`
+      ]);
       
-      if (!fs.existsSync(outputPath)) {
-        throw new Error(`Failed to create even a simple slide image #${slideNumber}`);
-      }
+      const data = await ffmpeg.readFile(`fallback_slide_${slideNumber}.png`);
+      fs.writeFileSync(outputPath, Buffer.from(data));
       
       console.log(`Simple fallback slide image #${slideNumber} created at: ${outputPath}`);
     } catch (fallbackError) {
       console.error(`Even fallback slide creation failed for #${slideNumber}:`, fallbackError);
-      throw error; // Throw the original error
+      throw error;
     }
   }
 }

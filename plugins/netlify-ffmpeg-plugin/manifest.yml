@@ -1,0 +1,8 @@
+name: netlify-ffmpeg-plugin
+description: Custom plugin to handle FFmpeg setup in Netlify Functions
+inputs: []
+events:
+  - name: onPreBuild
+    description: Sets up FFmpeg in the Netlify environment
+  - name: onFunctionsPackage
+    description: Ensures that FFmpeg is available to Netlify Functions 

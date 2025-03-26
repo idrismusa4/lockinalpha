@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 
 module.exports = {
-  onPreBuild: ({ utils }) => {
+  async onPreBuild({ utils, constants }) {
     console.log('Running FFmpeg setup pre-build plugin');
     try {
       // Ensure the scripts directory exists
@@ -31,7 +31,7 @@ module.exports = {
     }
   },
   
-  onFunctionsPackage: ({ utils }) => {
+  async onFunctionsPackage({ utils, constants }) {
     console.log('Running FFmpeg post-functions-package plugin');
     try {
       // Ensure the fix-netlify-functions.js script exists

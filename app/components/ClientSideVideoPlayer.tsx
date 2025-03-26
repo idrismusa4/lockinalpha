@@ -6,7 +6,7 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { Button } from '@/components/ui/button';
 import { Loader2, AlertCircle } from 'lucide-react';
 import EnhancedAudioPlayer from './EnhancedAudioPlayer';
-import { mightHaveCorsIssues } from '../utils/cors-proxy';
+import { mightHaveCorsIssues } from '@/app/utils/cors-proxy';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface VideoPlayerProps {

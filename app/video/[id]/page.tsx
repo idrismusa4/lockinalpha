@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import ClientSideVideoPlayer from '../../components/ClientSideVideoPlayer';
 import { supabase } from '@/app/supabase';
 import { Loader2 } from 'lucide-react';
-import { mightHaveCorsIssues, createProxyUrl } from '../utils/cors-proxy';
+import { mightHaveCorsIssues, createProxyUrl } from '@/app/utils/cors-proxy';
 
 interface VideoPageProps {
   params: {

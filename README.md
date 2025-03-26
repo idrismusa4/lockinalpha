@@ -128,9 +128,9 @@ Before deploying to Vercel, you'll need:
    - Connect your GitHub repository to Vercel
    - Add the following environment variables in the Vercel project settings:
      ```
-     AWS_ACCESS_KEY_ID=your_aws_access_key_here
-     AWS_SECRET_ACCESS_KEY=your_aws_secret_key_here
-     AWS_REGION=us-east-1
+     MY_AWS_ACCESS_KEY_ID=your_MY_AWS_access_key_here
+     MY_AWS_SECRET_ACCESS_KEY=your_MY_AWS_secret_key_here
+     MY_AWS_REGION=us-east-1
      NEXT_PUBLIC_SUPABASE_URL=your_supabase_url_here
      NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key_here
      SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_here

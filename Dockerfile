@@ -1,8 +1,10 @@
 FROM node:18
 
-# Install FFmpeg
+# Install FFmpeg and other required tools
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -11,8 +13,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies with legacy peer deps for compatibility
+RUN npm ci --legacy-peer-deps
 
 # Copy the rest of the application
 COPY . .

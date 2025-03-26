@@ -1,22 +1,13 @@
 [build]
-  command = "echo 'Using Docker image instead of standard build'"
+  command = "npm run build:netlify"
   publish = ".next"
 
 [build.environment]
   NODE_VERSION = "18"
   NEXT_TELEMETRY_DISABLED = "1"
-
-[dev]
-  command = "npm run dev"
-  port = 3000
-  publish = ".next"
-
-[[plugins]]
-  package = "@netlify/plugin-nextjs"
-
-# Tell Netlify to use our Docker image
-[build.image]
-  dockerfile = "./Dockerfile"
+  # Required for Docker build
+  NETLIFY_USE_YARN = "false"
+  NETLIFY_IMAGE_INCLUDED_PATHS = "/*"
 
 # Increase function timeouts for video processing
 [functions]
@@ -30,4 +21,15 @@
   
 [functions."api/generateVideo/*"]
   timeout = 300
-  memory = 3008 
+  memory = 3008
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Docker configuration for local development
+[dev]
+  command = "npm run dev"
+  port = 3000
+  targetPort = 3000
+  publish = ".next"
+  framework = "nextjs" 

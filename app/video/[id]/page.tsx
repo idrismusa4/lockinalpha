@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import ClientSideVideoPlayer from '../../components/ClientSideVideoPlayer';
 import { supabase } from '@/app/supabase';
 import { Loader2 } from 'lucide-react';
-import { mightHaveCorsIssues } from '@/app/utils/cors-proxy';
+import { mightHaveCorsIssues, createProxyUrl } from '../utils/cors-proxy';
 
 interface VideoPageProps {
   params: {
@@ -29,17 +29,20 @@ async function getJobData(jobId: string) {
 function getProxiedMediaUrl(originalUrl: string): string {
   // Skip proxying if not needed
   if (!mightHaveCorsIssues(originalUrl)) {
+    console.log('Using direct URL:', originalUrl);
     return originalUrl;
   }
   
-  // Extract the file name from the URL
-  const fileName = originalUrl.split('/').pop();
-  if (!fileName) {
-    return originalUrl;
+  // Use our improved proxy URL creation function
+  const proxyUrl = createProxyUrl(originalUrl);
+  if (proxyUrl) {
+    console.log('Using proxy URL:', proxyUrl);
+    return proxyUrl;
   }
   
-  // Return the proxied URL
-  return `/api/media-proxy/${fileName}`;
+  // Fallback to original URL if proxy creation fails
+  console.log('Proxy creation failed, using original URL:', originalUrl);
+  return originalUrl;
 }
 
 export default async function VideoPage({ params }: VideoPageProps) {
@@ -53,6 +56,10 @@ export default async function VideoPage({ params }: VideoPageProps) {
   // Determine if it's audio or video
   const isAudioOnly = job.videoUrl?.includes('/audios/');
   const originalMediaUrl = job.videoUrl;
+  
+  // Log the original URL for debugging
+  console.log(`Original media URL: ${originalMediaUrl}`);
+  
   // Use our proxy for media files to avoid CORS issues
   const mediaUrl = getProxiedMediaUrl(originalMediaUrl);
   const transcript = job.script || '';

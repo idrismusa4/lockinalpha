@@ -9,7 +9,8 @@
     "build:netlify": "chmod +x scripts/netlify-build.sh && ./scripts/netlify-build.sh",
     "start": "next start",
     "lint": "next lint",
-    "check-ffmpeg": "node scripts/check-ffmpeg.js"
+    "check-ffmpeg": "node scripts/check-ffmpeg.js",
+    "postinstall": "node scripts/netlify-post-install.js"
   },
   "dependencies": {
     "@aws-sdk/client-polly": "^3.758.0",

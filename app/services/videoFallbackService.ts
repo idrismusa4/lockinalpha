@@ -25,10 +25,23 @@ const IS_SERVERLESS = process.env.VERCEL === '1' || process.env.NETLIFY === '1';
 
 // Flag to check if we're in a Docker environment (which means we have system FFmpeg)
 const HAS_SYSTEM_FFMPEG = process.env.NODE_ENV === 'production' && !IS_SERVERLESS;
+const IS_NETLIFY = process.env.NETLIFY === 'true';
 
 // Check if system FFmpeg is available
 async function isSystemFFmpegAvailable(): Promise<boolean> {
   try {
+    // If we're on Netlify, check if NETLIFY_FFMPEG_PATH is set
+    if (IS_NETLIFY && process.env.NETLIFY_FFMPEG_PATH) {
+      try {
+        await execAsync(`${process.env.NETLIFY_FFMPEG_PATH} -version`);
+        console.log('Netlify FFmpeg is available at custom path');
+        return true;
+      } catch (netlifyError) {
+        console.log('Custom Netlify FFmpeg path is invalid:', netlifyError);
+      }
+    }
+    
+    // Standard check
     await execAsync('ffmpeg -version');
     console.log('System FFmpeg is available');
     return true;
@@ -479,11 +492,15 @@ async function createSimpleSlideshowFromScript(outputPath: string, script: strin
       const tmpDir = path.dirname(outputPath);
       const slidePath = path.join(tmpDir, 'slide.png');
       
+      // Determine FFmpeg path
+      const ffmpegPath = IS_NETLIFY && process.env.NETLIFY_FFMPEG_PATH ? 
+        process.env.NETLIFY_FFMPEG_PATH : 'ffmpeg';
+      
       // Use FFmpeg to create a blue background
-      await execAsync(`ffmpeg -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 ${slidePath}`);
+      await execAsync(`${ffmpegPath} -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 ${slidePath}`);
       
       // Use FFmpeg to create video from image and audio
-      await execAsync(`ffmpeg -loop 1 -i ${slidePath} -i ${audioPath} -c:v libx264 -c:a aac -b:a 192k -shortest -pix_fmt yuv420p ${outputPath}`);
+      await execAsync(`${ffmpegPath} -loop 1 -i ${slidePath} -i ${audioPath} -c:v libx264 -c:a aac -b:a 192k -shortest -pix_fmt yuv420p ${outputPath}`);
       
       console.log('Slideshow created successfully with system FFmpeg');
       return;
@@ -494,7 +511,12 @@ async function createSimpleSlideshowFromScript(outputPath: string, script: strin
   }
   
   // If we get here, we don't have system FFmpeg
-  throw new Error('Not implemented in serverless environments without Docker');
+  if (IS_NETLIFY) {
+    console.log('FFmpeg not available on Netlify, falling back to audio-only mode');
+  } else {
+    console.log('Not implemented in serverless environments without Docker');
+  }
+  throw new Error('FFmpeg not available for video creation');
 }
 
 /**
@@ -571,8 +593,12 @@ export async function combineAudioFilesWithSystemFFmpeg(
       
       fs.writeFileSync(inputListPath, fileList);
       
+      // Determine FFmpeg path
+      const ffmpegPath = IS_NETLIFY && process.env.NETLIFY_FFMPEG_PATH ? 
+        process.env.NETLIFY_FFMPEG_PATH : 'ffmpeg';
+      
       // Use FFmpeg to concatenate the files
-      await execAsync(`ffmpeg -f concat -safe 0 -i ${inputListPath} -c copy ${outputPath}`);
+      await execAsync(`${ffmpegPath} -f concat -safe 0 -i ${inputListPath} -c copy ${outputPath}`);
       
       console.log('Audio files combined successfully with system FFmpeg');
       return;
@@ -582,5 +608,8 @@ export async function combineAudioFilesWithSystemFFmpeg(
     }
   }
   
+  if (IS_NETLIFY) {
+    console.log('FFmpeg not available on Netlify for audio combination');
+  }
   throw new Error('FFmpeg is not available for audio file combination');
 }

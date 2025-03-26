@@ -1,13 +1,10 @@
 [build]
-  command = "npm run build:netlify"
+  command = "npm run build"
   publish = ".next"
 
 [build.environment]
   NODE_VERSION = "18"
   NEXT_TELEMETRY_DISABLED = "1"
-  # Required for Docker build
-  NETLIFY_USE_YARN = "false"
-  NETLIFY_IMAGE_INCLUDED_PATHS = "/*"
 
 # Increase function timeouts for video processing
 [functions]

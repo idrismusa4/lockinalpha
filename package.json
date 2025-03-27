@@ -6,8 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "build:notrace": "set NODE_OPTIONS=--max_old_space_size=4096 && set NEXT_TELEMETRY_DISABLED=1 && next build",
+    "prebuild": "node scripts/netlify-build-setup.js",
+    "vercel:prebuild": "node scripts/vercel-setup.js",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "netlify:build": "npm run prebuild && npm run build",
+    "vercel:build": "npm run vercel:prebuild && npm run build",
+    "prepare-deploy": "node scripts/prepare-deployment.js"
   },
   "dependencies": {
     "@aws-sdk/client-polly": "^3.758.0",

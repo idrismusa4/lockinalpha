@@ -1,12 +1,16 @@
 [build]
-  command = "npm run build"
+  command = "npm run netlify:build"
   publish = ".next"
-  ignore = "git diff --quiet HEAD^ HEAD ./app/"
 
 [build.environment]
+  NODE_ENV = "production"
+  NETLIFY = "true"
+  FFMPEG_PATH = "/usr/bin/ffmpeg"
+  FONT_PATH = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+  FFMPEG_FONT_PATH = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+  FONTCONFIG_PATH = "/etc/fonts"
   NODE_VERSION = "18"
   NEXT_TELEMETRY_DISABLED = "1"
-  NETLIFY_USE_PNPM = "false"
 
 # Create an environment variable alias for FFMPEG_PATH
 [context.production.environment]
@@ -34,12 +38,10 @@
   command = "npm run build"
   publish = ".next"
   base = "node:18-bullseye"
-  packages = ["ffmpeg"]
+  packages = ["ffmpeg", "fontconfig", "fonts-dejavu"]
 
-# Docker configuration for local development
-[dev]
-  command = "npm run dev"
-  port = 3000
-  targetPort = 3000
-  publish = ".next"
-  framework = "nextjs" 
+# This redirects all requests to the Next.js application
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/next"
+  status = 200 

@@ -268,3 +268,126 @@ When deploying to Vercel or similar serverless platforms:
 
 - In local development, full video generation is supported when FFmpeg is installed
 - In production (Vercel), the application might fall back to audio-only mode
+
+## Deployment Instructions
+
+### Before deploying to Netlify or Vercel
+
+Make sure all scripts are executable:
+
+```bash
+# Run this on Linux/Mac or in WSL on Windows
+chmod +x scripts/*.js
+chmod +x docker-entrypoint.sh
+```
+
+## Netlify Deployment Step-by-Step
+
+1. **Prepare your repository**
+   - Make sure all your code is committed and pushed to GitHub, GitLab, or Bitbucket
+   - Ensure your repository includes the `netlify.toml` file
+
+2. **Sign up or log in to Netlify**
+   - Go to [netlify.com](https://netlify.com) and sign up/log in
+   - Click "Add new site" → "Import an existing project"
+
+3. **Connect to your Git provider**
+   - Select GitHub, GitLab, or Bitbucket
+   - Authorize Netlify to access your repositories
+   - Select the repository containing LockIn Alpha
+
+4. **Configure build settings**
+   - Netlify should automatically detect settings from netlify.toml
+   - Build command: `npm run netlify:build`
+   - Publish directory: `.next`
+
+5. **Add environment variables**
+   - Go to Site settings → Environment variables
+   - Add the following:
+     - `SUPABASE_URL`: Your Supabase URL
+     - `SUPABASE_ANON_KEY`: Your Supabase anonymous key
+     - `AWS_ACCESS_KEY_ID`: For AWS Polly TTS
+     - `AWS_SECRET_ACCESS_KEY`: For AWS Polly TTS
+     - `AWS_REGION`: For AWS Polly (e.g., us-east-1)
+     - Any other API keys or secrets your app needs
+
+6. **Deploy your site**
+   - Click "Deploy site"
+   - Netlify will build and deploy your application
+   - The site will be available at a random subdomain (e.g., random-name.netlify.app)
+
+7. **Set up a custom domain (optional)**
+   - Go to "Domain settings"
+   - Add a custom domain and follow the instructions to configure DNS
+
+8. **Check deployment status**
+   - Go to "Deploys" to see build logs and debug any issues
+   - Check "Functions" to verify your serverless functions are deployed
+
+## Vercel Deployment Step-by-Step
+
+1. **Prepare your repository**
+   - Make sure all your code is committed and pushed to GitHub, GitLab, or Bitbucket
+   - Ensure your repository includes the `vercel.json` file
+
+2. **Sign up or log in to Vercel**
+   - Go to [vercel.com](https://vercel.com) and sign up/log in
+   - Click "Add New" → "Project"
+
+3. **Import your Git repository**
+   - Connect to GitHub, GitLab, or Bitbucket
+   - Select the repository containing LockIn Alpha
+
+4. **Configure project**
+   - Framework Preset: Next.js
+   - Build Command: npm run vercel:build
+   - Output Directory: .next
+   - Install Command: npm install
+
+5. **Add environment variables**
+   - Expand "Environment Variables" section
+   - Add the following:
+     - `SUPABASE_URL`: Your Supabase URL
+     - `SUPABASE_ANON_KEY`: Your Supabase anonymous key
+     - `AWS_ACCESS_KEY_ID`: For AWS Polly TTS
+     - `AWS_SECRET_ACCESS_KEY`: For AWS Polly TTS
+     - `AWS_REGION`: For AWS Polly (e.g., us-east-1)
+     - `FFMPEG_WASM_MODE`: true
+     - Any other API keys or secrets your app needs
+
+6. **Deploy**
+   - Click "Deploy"
+   - Vercel will build and deploy your application
+   - The site will be available at a random subdomain (e.g., project-name.vercel.app)
+
+7. **Set up a custom domain (optional)**
+   - Go to "Domains"
+   - Add a custom domain and follow the instructions to configure DNS
+
+8. **Check deployment status**
+   - Go to "Deployments" to see build logs and debug any issues
+   - Check "Functions" to verify your serverless functions are deployed
+
+## Important Notes
+
+- **Video Generation**: 
+  - On Netlify, video generation should work with our Docker-based setup
+  - On Vercel, due to serverless limitations, the app may fall back to audio-only mode
+  
+- **Serverless Limitations**:
+  - Function execution timeouts (max 300 seconds on both platforms)
+  - Memory limits (max 3GB RAM)
+  - File system access is limited and ephemeral
+  
+- **Troubleshooting**:
+  - Check build logs for issues with FFmpeg or font configuration
+  - In Netlify, you can use build plugins for advanced configuration
+  - In Vercel, check function logs for details on execution issues
+
+- **Docker Alternative**:
+  - For full feature support, consider using the Docker image you created
+  - Deploy to a platform that supports Docker containers like:
+    - AWS ECS/Fargate
+    - Google Cloud Run
+    - DigitalOcean App Platform
+    - Render.com

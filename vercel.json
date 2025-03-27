@@ -7,7 +7,7 @@
   "functions": {
     "api/generateVideo/*.js": {
       "memory": 3008,
-      "maxDuration": 300
+      "maxDuration": 60
     }
   },
   "env": {

@@ -26,7 +26,8 @@ try {
   console.error('Error creating directory:', error);
 }
 
-// Check FFmpeg installation
+// Install FFmpeg if not available
+let ffmpegAvailable = false;
 console.log('\nChecking FFmpeg installation...');
 try {
   const ffmpegVersion = execSync('ffmpeg -version').toString();
@@ -37,9 +38,29 @@ try {
   process.env.FFMPEG_PATH = '/usr/bin/ffmpeg';
   process.env.NETLIFY_FFMPEG_PATH = '/usr/bin/ffmpeg';
   console.log(`✅ Set FFMPEG_PATH to ${process.env.FFMPEG_PATH}`);
+  ffmpegAvailable = true;
 } catch (error) {
   console.error('❌ FFmpeg is not installed or not found in PATH');
   console.error(error.message);
+  
+  // Try to install FFmpeg
+  console.log('Attempting to install FFmpeg...');
+  try {
+    execSync('apt-get update && apt-get install -y ffmpeg', { stdio: 'inherit' });
+    console.log('✅ FFmpeg installed successfully');
+    
+    // Verify installation
+    const ffmpegVersion = execSync('ffmpeg -version').toString();
+    console.log(ffmpegVersion.split('\n')[0]);
+    
+    process.env.FFMPEG_PATH = '/usr/bin/ffmpeg';
+    process.env.NETLIFY_FFMPEG_PATH = '/usr/bin/ffmpeg';
+    ffmpegAvailable = true;
+  } catch (installError) {
+    console.error('❌ Failed to install FFmpeg:', installError.message);
+    console.log('⚠️ Setting FFMPEG_WASM_MODE=true for fallback to WASM FFmpeg');
+    process.env.FFMPEG_WASM_MODE = 'true';
+  }
 }
 
 // Check font configuration
@@ -49,7 +70,8 @@ try {
   console.log('Available DejaVu fonts:');
   console.log(fontList);
   
-  const fontPath = '/usr/share/fonts/dejavu/DejaVuSans.ttf';
+  // Update the font path to use the correct path found in the build logs
+  const fontPath = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf';
   
   if (fs.existsSync(fontPath)) {
     console.log(`✅ Found DejaVu Sans font at ${fontPath}`);
@@ -110,13 +132,18 @@ try {
   console.error('❌ Error copying scripts:', error.message);
 }
 
-// Create a temporary test to verify FFmpeg works
-console.log('\nTesting FFmpeg functionality...');
-try {
-  execSync('node scripts/test-ffmpeg-image.js');
-  console.log('✅ FFmpeg test passed');
-} catch (error) {
-  console.error('❌ FFmpeg test failed:', error.message);
+// Skip FFmpeg test if it's not available
+if (ffmpegAvailable) {
+  console.log('\nTesting FFmpeg functionality...');
+  try {
+    execSync('node scripts/test-ffmpeg-image.js');
+    console.log('✅ FFmpeg test passed');
+  } catch (error) {
+    console.error('❌ FFmpeg test failed:', error.message);
+    console.log('⚠️ Continuing with build despite FFmpeg test failure');
+  }
+} else {
+  console.log('\n⚠️ Skipping FFmpeg test as FFmpeg is not available');
 }
 
 console.log('\n=== Build setup complete ==='); 

@@ -3,11 +3,11 @@
   publish = ".next"
 
 [build.environment]
-  NODE_ENV = "production"
+  NODE_ENV = "development"
   NETLIFY = "true"
   FFMPEG_PATH = "/usr/bin/ffmpeg"
-  FONT_PATH = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
-  FFMPEG_FONT_PATH = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+  FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+  FFMPEG_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
   FONTCONFIG_PATH = "/etc/fonts"
   NODE_VERSION = "18"
   NEXT_TELEMETRY_DISABLED = "1"
@@ -33,12 +33,9 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# Specify Docker container for build and functions
-[build.image]
-  command = "npm run build"
-  publish = ".next"
-  base = "node:18-bullseye"
-  packages = ["ffmpeg", "fontconfig", "fonts-dejavu"]
+# Run a pre-install script to install FFmpeg before the build
+[build.lifecycle]
+  onInit = "apt-get update && apt-get install -y ffmpeg fontconfig fonts-dejavu"
 
 # This redirects all requests to the Next.js application
 [[redirects]]

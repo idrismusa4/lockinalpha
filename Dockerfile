@@ -1,42 +1,34 @@
-FROM node:18
+# ---------- Stage 1: Builder ----------
+    FROM node:18-alpine AS builder
 
-# Install FFmpeg and other required tools
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create app directory
-WORKDIR /app
-
-# Copy package files
-COPY package.json package-lock.json ./
-
-# Install dependencies with legacy peer deps for compatibility
-RUN npm ci --legacy-peer-deps
-
-# Copy the rest of the application
-COPY . .
-
-# Make scripts executable
-RUN chmod +x scripts/*.js
-
-# Verify FFmpeg installation and log the version
-RUN ffmpeg -version
-RUN echo "FFmpeg path: $(which ffmpeg)"
-RUN node scripts/check-docker-ffmpeg.js
-
-# Build the application
-RUN npm run build
-
-# Set environment variables
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV NETLIFY_FFMPEG_PATH=/usr/bin/ffmpeg
-
-# Expose port
-EXPOSE 3000
-
-# Start the application
-CMD ["npm", "start"] 
+    # Set working directory
+    WORKDIR /usr/src/app
+    
+    # Copy package files and install dependencies
+    COPY package*.json ./
+    RUN npm install
+    
+    # Copy the rest of your application code
+    COPY . .
+    
+    # Build the Next.js application (this creates the .next folder)
+    RUN npm run build
+    
+    # ---------- Stage 2: Production ----------
+    FROM node:18-alpine
+    
+    # Set working directory
+    WORKDIR /usr/src/app
+    
+    # Update apk repositories and install FFmpeg without cache
+    RUN apk update && apk add --no-cache ffmpeg
+    
+    # Copy built assets from the builder stage (including the .next folder)
+    COPY --from=builder /usr/src/app ./
+    
+    # Expose the port your app uses
+    EXPOSE 3000
+    
+    # Start the Next.js production server
+    CMD ["npm", "start"]
+    

@@ -5,59 +5,79 @@
  */
 
 const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const os = require('os');
 
-console.log('===== Docker FFmpeg Availability Check =====');
-console.log(`Running in Node.js ${process.version}`);
-console.log(`Platform: ${os.platform()}, Architecture: ${os.arch()}`);
-console.log(`Process environment: ${process.env.NODE_ENV || 'development'}`);
+console.log('=== FFmpeg Docker Environment Check ===');
+console.log(`Running in environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`Platform: ${os.platform()}, Release: ${os.release()}`);
+console.log(`CPU architecture: ${os.arch()}`);
 
-try {
-  console.log('\nChecking system FFmpeg...');
-  const ffmpegVersion = execSync('ffmpeg -version').toString();
-  console.log('✅ FFmpeg is available!');
-  console.log('Version info:');
-  console.log(ffmpegVersion.split('\n')[0]);
-  
-  // Get ffmpeg location
-  const ffmpegPath = execSync('which ffmpeg').toString().trim();
-  console.log(`FFmpeg path: ${ffmpegPath}`);
-  
-  // Test a simple ffmpeg command
-  console.log('\nTesting FFmpeg functionality...');
-  const testCmd = 'ffmpeg -f lavfi -i testsrc=duration=1:size=320x240:rate=30 -f null -';
-  execSync(testCmd);
-  console.log('✅ FFmpeg test command executed successfully');
-  
-  console.log('\nEnvironment variables:');
-  console.log(`NETLIFY_FFMPEG_PATH: ${process.env.NETLIFY_FFMPEG_PATH || 'not set'}`);
-  
-  console.log('\n===== FFmpeg is properly configured in Docker =====');
-  process.exit(0);
-} catch (error) {
-  console.error('\n❌ FFmpeg check failed:');
-  console.error(error.message);
-  
-  if (error.stdout) console.error('stdout:', error.stdout.toString());
-  if (error.stderr) console.error('stderr:', error.stderr.toString());
-  
-  console.log('\nTrying to find FFmpeg in common locations...');
-  const commonPaths = [
-    '/usr/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
-    '/opt/ffmpeg/bin/ffmpeg'
-  ];
-  
-  for (const path of commonPaths) {
-    try {
-      const exists = execSync(`ls -la ${path}`).toString();
-      console.log(`Found at ${path}:`);
-      console.log(exists);
-    } catch (e) {
-      console.log(`Not found at ${path}`);
-    }
+function checkFFmpeg() {
+  try {
+    // Check FFmpeg installation
+    console.log('\nChecking FFmpeg installation...');
+    const ffmpegVersion = execSync('ffmpeg -version').toString();
+    console.log('✅ FFmpeg is installed!');
+    console.log('Version info:');
+    console.log(ffmpegVersion.split('\n')[0]);
+    
+    // Test FFmpeg functionality
+    console.log('\nTesting FFmpeg functionality...');
+    
+    // Create a test directory
+    const testDir = path.join(os.tmpdir(), 'ffmpeg-test-' + Date.now());
+    fs.mkdirSync(testDir, { recursive: true });
+    
+    // Create a test audio file
+    const testAudio = path.join(testDir, 'test.mp3');
+    execSync(`ffmpeg -f lavfi -i "sine=frequency=1000:duration=5" ${testAudio}`);
+    console.log('✅ Created test audio successfully');
+    
+    // Create a test video
+    const testVideo = path.join(testDir, 'test.mp4');
+    execSync(`ffmpeg -f lavfi -i color=c=blue:s=320x240:d=5 -vf "drawtext=text='FFmpeg Test':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=(h-text_h)/2" ${testVideo}`);
+    console.log('✅ Created test video successfully');
+    
+    // Check file sizes
+    const audioSize = fs.statSync(testAudio).size;
+    const videoSize = fs.statSync(testVideo).size;
+    
+    console.log(`\nFile sizes:`);
+    console.log(`- Audio: ${formatBytes(audioSize)}`);
+    console.log(`- Video: ${formatBytes(videoSize)}`);
+    
+    // Clean up
+    fs.unlinkSync(testAudio);
+    fs.unlinkSync(testVideo);
+    fs.rmdirSync(testDir);
+    
+    console.log('\n✅ All FFmpeg tests passed successfully!');
+    return true;
+  } catch (error) {
+    console.error('\n❌ FFmpeg test failed:');
+    console.error(error.message);
+    if (error.stdout) console.error('stdout:', error.stdout.toString());
+    if (error.stderr) console.error('stderr:', error.stderr.toString());
+    return false;
   }
+}
+
+function formatBytes(bytes, decimals = 2) {
+  if (bytes === 0) return '0 Bytes';
   
-  console.error('\n===== FFmpeg setup failed =====');
-  process.exit(1);
-} 
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
+console.log('\n=== Results ===');
+const result = checkFFmpeg();
+console.log(`FFmpeg availability: ${result ? 'Available ✅' : 'Not available ❌'}`);
+
+process.exit(result ? 0 : 1); 

@@ -51,9 +51,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
                     videoUrl.toLowerCase().includes('/audios/');
     setIsAudioOnly(isAudio);
 
-    // For video content, use the fallback player by default
+    // For video content, use the blob player by default
     if (!isAudio) {
-      setUseFallbackPlayer(true);
+      // This is the key change - load video as blob by default
+      // Set a small timeout to ensure the component is mounted
+      setTimeout(() => {
+        handlePlayWithBlob();
+      }, 100);
     }
 
     // Check if the resource is accessible
@@ -400,16 +404,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
             </div>
             
             {!isAudioOnly && renderDirectLink()}
-            {!isAudioOnly && (
+            {!isAudioOnly && !isFetchingBlob && (
               <Button 
                 variant="outline" 
                 size="sm"
                 className="mt-4"
-                onClick={handlePlayWithBlob}
-                disabled={isFetchingBlob}
+                onClick={() => {
+                  // Fall back to standard player if blob approach fails
+                  setUseFallbackPlayer(true);
+                  setLoading(false);
+                }}
               >
                 <Play className="mr-2 h-4 w-4" />
-                {isFetchingBlob ? "Preparing Video..." : "Try Alternative Player"}
+                Use Standard Player
               </Button>
             )}
           </div>
@@ -427,7 +434,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
                   <RotateCcw className="mr-2 h-4 w-4" />
                   Try Again
                 </Button>
-                {!isAudioOnly && (
+                {!isAudioOnly && !blobUrl && (
                   <Button 
                     variant="outline" 
                     size="sm"
@@ -436,7 +443,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
                     disabled={isFetchingBlob}
                   >
                     <Play className="mr-2 h-4 w-4" />
-                    {isFetchingBlob ? "Preparing..." : "Try Alternative Player"}
+                    {isFetchingBlob ? "Preparing..." : "Try Blob Player"}
+                  </Button>
+                )}
+                {!isAudioOnly && !useFallbackPlayer && (
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    className="mt-2 mr-2"
+                    onClick={() => setUseFallbackPlayer(true)}
+                  >
+                    <Play className="mr-2 h-4 w-4" />
+                    Try Standard Player
                   </Button>
                 )}
                 <a
@@ -515,7 +533,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onRetry }) => {
                   className="flex items-center"
                 >
                   <Play className="mr-2 h-4 w-4" />
-                  {isFetchingBlob ? "Preparing..." : "Try Alternative Player"}
+                  {isFetchingBlob ? "Preparing..." : "Use Blob Player"}
+                </Button>
+              )}
+              
+              {!useFallbackPlayer && blobUrl && (
+                <Button 
+                  variant="outline"
+                  onClick={() => setUseFallbackPlayer(true)}
+                  className="flex items-center"
+                >
+                  <Play className="mr-2 h-4 w-4" />
+                  Try Standard Player
                 </Button>
               )}
               

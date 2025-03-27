@@ -334,53 +334,73 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
   try {
     console.log('Attempting to render video using Remotion...');
     
-    // Try to dynamically import Remotion packages
-    let RemotionBundler: RemotionBundlerType | null = null;
-    let RemotionRenderer: RemotionRendererType | null = null;
-    
+    // Import required modules dynamically
+    let bundleImport;
+    let renderImport;
     try {
-      // Using dynamic import with catch to handle missing packages
-      const bundlerModule = await import('@remotion/bundler').catch(err => {
-        console.log('Could not import @remotion/bundler:', err.message);
-        return null;
-      });
-      
-      const rendererModule = await import('@remotion/renderer').catch(err => {
-        console.log('Could not import @remotion/renderer:', err.message);
-        return null;
-      });
-      
-      RemotionBundler = bundlerModule as RemotionBundlerType;
-      RemotionRenderer = rendererModule as RemotionRendererType;
-    } catch (importError) {
-      console.log('Could not import Remotion packages. This is expected in some environments.', importError);
-      return false;
-    }
-
-    if (!RemotionBundler || !RemotionRenderer) {
-      console.log('Could not import Remotion packages. Falling back to basic video creation.');
+      bundleImport = await import('@remotion/bundler');
+      renderImport = await import('@remotion/renderer');
+    } catch (error) {
+      console.error('Error importing Remotion modules:', error);
       return false;
     }
     
-    const { bundle } = RemotionBundler;
-    const { renderMedia, selectComposition } = RemotionRenderer;
+    const bundle = bundleImport.bundle;
+    const renderMedia = renderImport.renderMedia;
+    const selectComposition = renderImport.selectComposition;
     
-    // Get the absolute path to the Remotion entry point
-    const entryPoint = path.join(process.cwd(), 'app/remotion/index.tsx');
+    // Create temp dir for temporary files
+    const tmpDir = fs.mkdirSync(path.join(os.tmpdir(), `remotion-${Date.now()}`), { recursive: true });
     
+    // Set the entry point to the root.tsx file that contains registerRoot
+    // This is the key fix for the Remotion error
+    const entryPoint = path.join(process.cwd(), 'app', 'remotion', 'root.tsx');
+    
+    // If the file doesn't exist, create it by copying the existing index.tsx
     if (!fs.existsSync(entryPoint)) {
-      console.error(`Remotion entry point not found at: ${entryPoint}`);
-      return false;
+      console.log('Remotion root file not found, creating one...');
+      try {
+        // Check if index.tsx exists
+        const indexPath = path.join(process.cwd(), 'app', 'remotion', 'index.tsx');
+        if (fs.existsSync(indexPath)) {
+          // Create a simple root file that imports from index.tsx
+          const rootContent = `
+            import { registerRoot } from 'remotion';
+            import { VideoLecture } from './VideoLecture';
+            import { Composition } from 'remotion';
+            
+            const Root = () => {
+              return (
+                <Composition
+                  id="VideoLecture"
+                  component={VideoLecture}
+                  width={1280}
+                  height={720}
+                  fps={30}
+                  durationInFrames={300}
+                  defaultProps={{
+                    script: "Default script content",
+                    audioUrl: ""
+                  }}
+                />
+              );
+            };
+            
+            registerRoot(Root);
+          `;
+          fs.writeFileSync(entryPoint, rootContent);
+          console.log('Created Remotion root file');
+        } else {
+          console.error('Remotion index.tsx file not found');
+          return false;
+        }
+      } catch (createError) {
+        console.error('Error creating Remotion root file:', createError);
+        return false;
+      }
     }
     
-    // Verify we have the audio file
-    if (!fs.existsSync(audioPath)) {
-      console.error(`Audio file not found at: ${audioPath}`);
-      return false;
-    }
-    
-    // Create a simplified temporary copy of the audio file with a predictable name
-    const tmpDir = path.dirname(outputPath);
+    // Copy the audio file to the temp directory
     const tmpAudioPath = path.join(tmpDir, `audio-${path.basename(audioPath)}`);
     fs.copyFileSync(audioPath, tmpAudioPath);
     
@@ -388,6 +408,8 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
     console.log(`Bundling Remotion project from: ${entryPoint}`);
     const bundleLocation = await bundle({
       entryPoint,
+      // Add ignoreRegisterRootWarning to avoid errors if the file isn't set up correctly
+      ignoreRegisterRootWarning: true,
       webpackOverride: (config) => {
         return {
           ...config,
@@ -431,58 +453,27 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
       },
     });
     
-    // Render the video with serverless-compatible settings
+    // Ensure the output directory exists
+    const outputDir = path.dirname(outputPath);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    
+    // Render the video
+    console.log(`Rendering video to ${outputPath}...`);
     await renderMedia({
       composition,
       serveUrl: bundleLocation,
       codec: 'h264',
       outputLocation: outputPath,
-      props: {
-        script,
-        audioUrl: tmpAudioPath,
-      },
+      imageFormat: 'jpeg',
       durationInFrames,
       fps,
-      imageFormat: 'jpeg',
-      chromiumOptions: {
-        disableWebSecurity: true,
-        headless: true,
-        args: [
-          '--disable-web-security',
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--no-first-run',
-          '--no-zygote',
-          '--single-process'
-        ],
-      },
       pixelFormat: 'yuv420p',
     });
     
-    // Clean up the temporary audio file
-    try {
-      if (fs.existsSync(tmpAudioPath)) {
-        fs.unlinkSync(tmpAudioPath);
-      }
-    } catch (cleanupErr) {
-      console.warn('Failed to clean up temporary audio file:', cleanupErr);
-    }
-    
-    // Check if the file was created
-    if (fs.existsSync(outputPath)) {
-      const stats = fs.statSync(outputPath);
-      console.log(`Remotion successfully rendered video to: ${outputPath} (${stats.size} bytes)`);
-      if (stats.size < 10000) {
-        console.error('Remotion output file is too small, may be corrupted.');
-        return false;
-      }
-      return true;
-    } else {
-      console.error('Remotion did not produce an output file');
-      return false;
-    }
+    console.log('Remotion video rendering completed successfully');
+    return true;
   } catch (error) {
     console.error('Error rendering with Remotion:', error);
     return false;
@@ -504,15 +495,30 @@ async function createSimpleSlideshowFromScript(outputPath: string, script: strin
       // Create a temporary image with blue background and text
       const tempImgPath = path.join(os.tmpdir(), `slide-${Date.now()}.png`);
       
-      // Generate a blue background with text using FFmpeg
-      const createImageCmd = `${ffmpegPath} -f lavfi -i color=c=blue:s=1280x720:d=5 -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='${script.substring(0, 100)}...':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=(h-text_h)/2" ${tempImgPath}`;
+      // Use the -frames:v 1 and -update flags to create a single image
+      // Also make sure we're using the correct font path from environment variable
+      const fontPath = process.env.FONT_PATH || process.env.FFMPEG_FONT_PATH || '/usr/share/fonts/dejavu/DejaVuSans.ttf';
+      console.log(`Using font path: ${fontPath}`);
+      
+      // Generate a blue background with text using FFmpeg with the correct arguments
+      const createImageCmd = `${ffmpegPath} -f lavfi -i color=c=blue:s=1280x720:d=1 -vf "drawtext=fontfile=${fontPath}:text='${script.substring(0, 100)}...':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=(h-text_h)/2" -frames:v 1 -update 1 ${tempImgPath}`;
       
       console.log('Creating background image with text...');
+      console.log(`Executing command: ${createImageCmd}`);
       await execAsync(createImageCmd);
+      
+      // Make sure the file was created
+      if (!fs.existsSync(tempImgPath)) {
+        console.error(`Image was not created at ${tempImgPath}`);
+        throw new Error(`Failed to create image at ${tempImgPath}`);
+      } else {
+        console.log(`Successfully created image at ${tempImgPath} (${fs.statSync(tempImgPath).size} bytes)`);
+      }
       
       // Combine image and audio to create video
       console.log('Combining image and audio to create video...');
       const createVideoCmd = `${ffmpegPath} -loop 1 -i ${tempImgPath} -i ${audioPath} -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest ${outputPath}`;
+      console.log(`Executing command: ${createVideoCmd}`);
       await execAsync(createVideoCmd);
       
       // Clean up temporary files

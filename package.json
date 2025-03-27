@@ -12,7 +12,8 @@
     "lint": "next lint",
     "netlify:build": "npm run prebuild && npm run build",
     "vercel:build": "npm run vercel:prebuild && npm run build",
-    "prepare-deploy": "node scripts/prepare-deployment.js"
+    "prepare-deploy": "node scripts/prepare-deployment.js",
+    "next-build": "export FFMPEG_WASM_MODE=true && export NEXT_PUBLIC_USE_DOCKER=true && next build"
   },
   "dependencies": {
     "@aws-sdk/client-polly": "^3.758.0",

@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { Lexend } from "next/font/google";
 import "./globals.css";
 import Link from "next/link";
-import { ThemeProvider } from "@/components/ui/theme-provider";
-import { Toaster } from "@/components/ui/toaster";
+import { Providers } from "./providers";
 import { initializeSupabaseStorage } from "./supabase";
 import { Analytics } from "@vercel/analytics/react"
 import { SpeedInsights } from '@vercel/speed-insights/next';
@@ -38,9 +37,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={lexend.className}>
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
-        <Analytics />
-        <SpeedInsights />
+        <Providers>
+          <Analytics />
+          <SpeedInsights />
           <div className="flex min-h-screen flex-col">
             <header className="border-b">
               <div className="container flex h-16 items-center justify-between py-4">
@@ -71,8 +70,7 @@ export default function RootLayout({
               </div>
             </footer>
           </div>
-          <Toaster />
-        </ThemeProvider>
+        </Providers>
       </body>
     </html>
   );

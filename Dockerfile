@@ -19,18 +19,21 @@ RUN npm ci --legacy-peer-deps
 # Copy the rest of the application
 COPY . .
 
-# Make the FFmpeg check script executable
-RUN chmod +x scripts/check-ffmpeg.js
+# Make scripts executable
+RUN chmod +x scripts/*.js
+
+# Verify FFmpeg installation and log the version
+RUN ffmpeg -version
+RUN echo "FFmpeg path: $(which ffmpeg)"
+RUN node scripts/check-docker-ffmpeg.js
 
 # Build the application
 RUN npm run build
 
-# Verify FFmpeg installation
-RUN npm run check-ffmpeg
-
 # Set environment variables
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NETLIFY_FFMPEG_PATH=/usr/bin/ffmpeg
 
 # Expose port
 EXPOSE 3000

@@ -1,5 +1,5 @@
 [build]
-  command = "node scripts/netlify-post-install.js && npm run build && node scripts/fix-netlify-functions.js"
+  command = "npm run build"
   publish = ".next"
   ignore = "git diff --quiet HEAD^ HEAD ./app/"
 
@@ -10,7 +10,7 @@
 
 # Create an environment variable alias for FFMPEG_PATH
 [context.production.environment]
-  NETLIFY_FFMPEG_PATH = ".netlify/bin/ffmpeg"
+  NETLIFY_FFMPEG_PATH = "/usr/bin/ffmpeg"
 
 # Increase function timeouts for video processing
 [functions]
@@ -18,17 +18,23 @@
   included_files = ["**/*.wasm", ".netlify/bin/**"]
 
 [functions."api/*"]
-  included_files = ["**/*.wasm", "node_modules/@ffmpeg/core/**", ".netlify/bin/**"]
+  included_files = ["**/*.wasm", "node_modules/@ffmpeg/core/**"]
   node_bundler = "esbuild"
   external_node_modules = ["@ffmpeg/ffmpeg", "@ffmpeg/util"]
   
 [functions."api/generateVideo/*"]
   timeout = 300
   memory = 3008
-  included_files = [".netlify/bin/**"]
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# Specify Docker container for build and functions
+[build.image]
+  command = "npm run build"
+  publish = ".next"
+  base = "node:18-bullseye"
+  packages = ["ffmpeg"]
 
 # Docker configuration for local development
 [dev]

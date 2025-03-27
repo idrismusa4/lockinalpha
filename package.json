@@ -10,6 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "check-ffmpeg": "node scripts/check-ffmpeg.js",
+    "check-docker-ffmpeg": "node scripts/check-docker-ffmpeg.js",
     "postinstall": "node scripts/netlify-post-install.js"
   },
   "dependencies": {

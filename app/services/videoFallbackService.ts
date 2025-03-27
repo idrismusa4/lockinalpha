@@ -27,29 +27,38 @@ const IS_SERVERLESS = process.env.VERCEL === '1' || process.env.NETLIFY === '1';
 const HAS_SYSTEM_FFMPEG = process.env.NODE_ENV === 'production' && !IS_SERVERLESS;
 const IS_NETLIFY = process.env.NETLIFY === 'true';
 
-// Check if system FFmpeg is available
+// System FFmpeg detection improved for Docker environments
 async function isSystemFFmpegAvailable(): Promise<boolean> {
   try {
-    // If we're on Netlify, check if NETLIFY_FFMPEG_PATH is set
-    if (IS_NETLIFY && process.env.NETLIFY_FFMPEG_PATH) {
+    // Check if NETLIFY_FFMPEG_PATH is set in the environment
+    const ffmpegEnvPath = process.env.NETLIFY_FFMPEG_PATH;
+    if (ffmpegEnvPath) {
       try {
-        await execAsync(`${process.env.NETLIFY_FFMPEG_PATH} -version`);
-        console.log('Netlify FFmpeg is available at custom path');
+        console.log(`Checking FFmpeg at env path: ${ffmpegEnvPath}`);
+        const { stdout } = await execAsync(`${ffmpegEnvPath} -version`);
+        console.log(`FFmpeg found at ${ffmpegEnvPath}: ${stdout.split('\n')[0]}`);
         return true;
-      } catch (netlifyError) {
-        console.log('Custom Netlify FFmpeg path is invalid:', netlifyError);
+      } catch (envPathError) {
+        console.error(`Error checking FFmpeg at ${ffmpegEnvPath}:`, envPathError);
+        // Continue to try system FFmpeg
       }
     }
-    
-    // Standard check
-    await execAsync('ffmpeg -version');
-    console.log('System FFmpeg is available');
+
+    // Try the system FFmpeg
+    console.log('Checking system FFmpeg...');
+    const { stdout } = await execAsync('ffmpeg -version');
+    console.log(`System FFmpeg found: ${stdout.split('\n')[0]}`);
     return true;
   } catch (error) {
-    console.log('System FFmpeg is not available:', error);
+    console.error('System FFmpeg not available:', error);
     return false;
   }
 }
+
+// Determine if we're in a Netlify Docker environment
+const isNetlify = process.env.NETLIFY === 'true';
+const isDockerEnvironment = isNetlify; // Assuming we're using Docker for Netlify
+const isServerlessEnvironment = process.env.VERCEL === '1' || (isNetlify && !isDockerEnvironment);
 
 // Define proper types for the module
 interface VideoRenderParams {
@@ -480,43 +489,45 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
   }
 }
 
-/**
- * A simple approach that doesn't use FFmpeg
- * This won't work in serverless, but we'll attempt it in non-serverless environments
- */
+// Enhancement for createSimpleSlideshowFromScript with improved Docker support
 async function createSimpleSlideshowFromScript(outputPath: string, script: string, audioPath: string): Promise<void> {
-  if (await isSystemFFmpegAvailable()) {
-    try {
+  try {
+    // Check for system FFmpeg first
+    const hasSystemFFmpeg = await isSystemFFmpegAvailable();
+    
+    if (hasSystemFFmpeg) {
       console.log('Using system FFmpeg to create slideshow');
-      // Create a simple colored background with text
-      const tmpDir = path.dirname(outputPath);
-      const slidePath = path.join(tmpDir, 'slide.png');
       
-      // Determine FFmpeg path
-      const ffmpegPath = IS_NETLIFY && process.env.NETLIFY_FFMPEG_PATH ? 
-        process.env.NETLIFY_FFMPEG_PATH : 'ffmpeg';
+      // Get FFmpeg path - use NETLIFY_FFMPEG_PATH if available, otherwise just 'ffmpeg'
+      const ffmpegPath = process.env.NETLIFY_FFMPEG_PATH || 'ffmpeg';
+
+      // Create a temporary image with blue background and text
+      const tempImgPath = path.join(os.tmpdir(), `slide-${Date.now()}.png`);
       
-      // Use FFmpeg to create a blue background
-      await execAsync(`${ffmpegPath} -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 ${slidePath}`);
+      // Generate a blue background with text using FFmpeg
+      const createImageCmd = `${ffmpegPath} -f lavfi -i color=c=blue:s=1280x720:d=5 -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='${script.substring(0, 100)}...':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=(h-text_h)/2" ${tempImgPath}`;
       
-      // Use FFmpeg to create video from image and audio
-      await execAsync(`${ffmpegPath} -loop 1 -i ${slidePath} -i ${audioPath} -c:v libx264 -c:a aac -b:a 192k -shortest -pix_fmt yuv420p ${outputPath}`);
+      console.log('Creating background image with text...');
+      await execAsync(createImageCmd);
       
-      console.log('Slideshow created successfully with system FFmpeg');
-      return;
-    } catch (error) {
-      console.error('Error using system FFmpeg:', error);
-      throw new Error(`System FFmpeg error: ${error instanceof Error ? error.message : String(error)}`);
+      // Combine image and audio to create video
+      console.log('Combining image and audio to create video...');
+      const createVideoCmd = `${ffmpegPath} -loop 1 -i ${tempImgPath} -i ${audioPath} -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest ${outputPath}`;
+      await execAsync(createVideoCmd);
+      
+      // Clean up temporary files
+      if (fs.existsSync(tempImgPath)) {
+        fs.unlinkSync(tempImgPath);
+      }
+      
+      console.log(`Video slideshow created successfully at ${outputPath}`);
+    } else {
+      throw new Error('FFmpeg not available for video creation');
     }
+  } catch (error) {
+    console.error('Error creating slideshow:', error);
+    throw new Error(`Failed to create video slideshow: ${error instanceof Error ? error.message : String(error)}`);
   }
-  
-  // If we get here, we don't have system FFmpeg
-  if (IS_NETLIFY) {
-    console.log('FFmpeg not available on Netlify, falling back to audio-only mode');
-  } else {
-    console.log('Not implemented in serverless environments without Docker');
-  }
-  throw new Error('FFmpeg not available for video creation');
 }
 
 /**
@@ -579,37 +590,55 @@ export async function combineAudioFilesWithSystemFFmpeg(
   audioChunkPaths: string[], 
   outputPath: string
 ): Promise<void> {
-  if (await isSystemFFmpegAvailable()) {
-    try {
-      console.log('Using system FFmpeg to combine audio files');
-      
-      // Create a text file listing all input files
-      const tmpDir = path.dirname(outputPath);
-      const inputListPath = path.join(tmpDir, 'audio_files.txt');
-      
-      const fileList = audioChunkPaths
-        .map(filePath => `file '${filePath.replace(/'/g, "\\'")}'`)
-        .join('\n');
-      
-      fs.writeFileSync(inputListPath, fileList);
-      
-      // Determine FFmpeg path
-      const ffmpegPath = IS_NETLIFY && process.env.NETLIFY_FFMPEG_PATH ? 
-        process.env.NETLIFY_FFMPEG_PATH : 'ffmpeg';
-      
-      // Use FFmpeg to concatenate the files
-      await execAsync(`${ffmpegPath} -f concat -safe 0 -i ${inputListPath} -c copy ${outputPath}`);
-      
-      console.log('Audio files combined successfully with system FFmpeg');
-      return;
-    } catch (error) {
-      console.error('Error combining audio files with system FFmpeg:', error);
-      throw new Error(`Failed to combine audio files: ${error instanceof Error ? error.message : String(error)}`);
+  try {
+    // Check if system FFmpeg is available
+    const systemFFmpegAvailable = await isSystemFFmpegAvailable();
+    if (!systemFFmpegAvailable) {
+      throw new Error('System FFmpeg is required but not available');
     }
+    
+    console.log('Using system FFmpeg to combine audio files');
+    
+    // Get the FFmpeg path - use environment variable if available
+    const ffmpegPath = process.env.NETLIFY_FFMPEG_PATH || 'ffmpeg';
+    console.log(`Using FFmpeg at: ${ffmpegPath}`);
+    
+    // Create a temporary file listing all input files
+    const fileListPath = path.join(os.tmpdir(), `audio_files_${Date.now()}.txt`);
+    
+    // Create file content for FFmpeg concat
+    const fileListContent = audioChunkPaths.map(
+      filePath => `file '${filePath.replace(/'/g, "\\'")}'`
+    ).join('\n');
+    
+    // Write the file list
+    fs.writeFileSync(fileListPath, fileListContent);
+    console.log(`Created file list at: ${fileListPath}`);
+    console.log(`File list contains ${audioChunkPaths.length} files`);
+    
+    // Build and execute the FFmpeg command
+    const command = `${ffmpegPath} -f concat -safe 0 -i "${fileListPath}" -c copy "${outputPath}"`;
+    console.log(`Executing FFmpeg command: ${command}`);
+    
+    const { stdout, stderr } = await execAsync(command);
+    
+    if (stderr) {
+      console.warn('FFmpeg stderr output:', stderr);
+    }
+    
+    if (stdout) {
+      console.log('FFmpeg stdout output:', stdout);
+    }
+    
+    // Clean up the temporary file
+    if (fs.existsSync(fileListPath)) {
+      fs.unlinkSync(fileListPath);
+      console.log('Removed temporary file list');
+    }
+    
+    console.log(`Successfully combined ${audioChunkPaths.length} audio files to: ${outputPath}`);
+  } catch (error) {
+    console.error('Error combining audio files with system FFmpeg:', error);
+    throw new Error(`Failed to combine audio files: ${error instanceof Error ? error.message : String(error)}`);
   }
-  
-  if (IS_NETLIFY) {
-    console.log('FFmpeg not available on Netlify for audio combination');
-  }
-  throw new Error('FFmpeg is not available for audio file combination');
 }

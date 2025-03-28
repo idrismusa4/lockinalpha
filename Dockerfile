@@ -1,5 +1,5 @@
 # ---------- Stage 1: Builder ----------
-FROM node:18-alpine AS builder
+FROM node:18-bullseye-slim AS builder
 
 # Set working directory
 WORKDIR /usr/src/app

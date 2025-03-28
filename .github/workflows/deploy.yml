@@ -3,30 +3,28 @@ name: Deploy to Heroku
 on:
   push:
     branches:
-      - main  # Change this if you want to deploy from a different branch
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install Heroku CLI
-        run: curl https://cli-assets.heroku.com/install.sh | sh
+      - name: Log in to Heroku Container Registry
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: heroku container:login
 
-      - name: Login to Heroku Container Registry
-        run: echo ${{ secrets.HEROKU_API_KEY }} | docker login --username=_ --password-stdin registry.heroku.com
+      - name: Build and push Docker image
+        env:
+          HEROKU_APP_NAME: "lockinalpha"
+        run: |
+          heroku container:push web --app $HEROKU_APP_NAME
 
-      - name: Build Docker image
-        run: docker build -t registry.heroku.com/${{ secrets.HEROKU_APP_NAME }}/web .
-
-      - name: Push Docker Image to Heroku
-        run: docker push registry.heroku.com/${{ secrets.HEROKU_APP_NAME }}/web
-
-      - name: Release the Image on Heroku
-        run: heroku container:release web --app ${{ secrets.HEROKU_APP_NAME }}
-
-      - name: Scale the Web Process
-        run: heroku ps:scale web=1 --app ${{ secrets.HEROKU_APP_NAME }}
+      - name: Release the image
+        env:
+          HEROKU_APP_NAME: "lockinalpha"
+        run: |
+          heroku container:release web --app $HEROKU_APP_NAME

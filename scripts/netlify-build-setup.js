@@ -1,149 +1,46 @@
 #!/usr/bin/env node
 
 /**
- * This script sets up the Netlify build environment for FFmpeg and fonts
- * Run this as part of the build process
+ * This script sets up basic configuration for Netlify builds
  */
 
-const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-console.log('=== Netlify Build Setup for FFmpeg and Fonts ===');
+console.log('=== Simple Netlify Build Setup ===');
 
-// Check if we're in Netlify
-if (process.env.NETLIFY !== 'true') {
-  console.log('Not running in Netlify environment. Exiting.');
-  process.exit(0);
-}
+// Set WebAssembly mode
+process.env.FFMPEG_WASM_MODE = 'true';
+console.log('✅ Set FFMPEG_WASM_MODE=true for WebAssembly FFmpeg');
 
-// Create a folder to store the build output
+// Create necessary directories
 console.log('\nCreating build directories...');
 try {
-  fs.mkdirSync(path.join(process.cwd(), '.netlify', 'bin'), { recursive: true });
-  console.log('✅ Created .netlify/bin directory');
+  fs.mkdirSync(path.join(process.cwd(), 'netlify', 'functions'), { recursive: true });
+  console.log('✅ Created Netlify directories for functions');
 } catch (error) {
-  console.error('Error creating directory:', error);
+  console.error('Error creating directories:', error);
 }
 
-// Install FFmpeg if not available
-let ffmpegAvailable = false;
-console.log('\nChecking FFmpeg installation...');
+// Create a simple WebAssembly FFmpeg initialization function
+console.log('\nSetting up WebAssembly FFmpeg...');
 try {
-  const ffmpegVersion = execSync('ffmpeg -version').toString();
-  console.log('✅ FFmpeg is installed:');
-  console.log(ffmpegVersion.split('\n')[0]);
-
-  // Set the FFMPEG_PATH environment variable for the build
-  process.env.FFMPEG_PATH = '/usr/bin/ffmpeg';
-  process.env.NETLIFY_FFMPEG_PATH = '/usr/bin/ffmpeg';
-  console.log(`✅ Set FFMPEG_PATH to ${process.env.FFMPEG_PATH}`);
-  ffmpegAvailable = true;
-} catch (error) {
-  console.error('❌ FFmpeg is not installed or not found in PATH');
-  console.error(error.message);
+  const initFFmpegFunction = `
+exports.handler = async function(event, context) {
+  console.log('FFmpeg WebAssembly initialization function');
   
-  // Try to install FFmpeg
-  console.log('Attempting to install FFmpeg...');
-  try {
-    execSync('apt-get update && apt-get install -y ffmpeg', { stdio: 'inherit' });
-    console.log('✅ FFmpeg installed successfully');
-    
-    // Verify installation
-    const ffmpegVersion = execSync('ffmpeg -version').toString();
-    console.log(ffmpegVersion.split('\n')[0]);
-    
-    process.env.FFMPEG_PATH = '/usr/bin/ffmpeg';
-    process.env.NETLIFY_FFMPEG_PATH = '/usr/bin/ffmpeg';
-    ffmpegAvailable = true;
-  } catch (installError) {
-    console.error('❌ Failed to install FFmpeg:', installError.message);
-    console.log('⚠️ Setting FFMPEG_WASM_MODE=true for fallback to WASM FFmpeg');
-    process.env.FFMPEG_WASM_MODE = 'true';
-  }
-}
-
-// Check font configuration
-console.log('\nChecking font configuration...');
-try {
-  const fontList = execSync('fc-list | grep -i dejavu').toString();
-  console.log('Available DejaVu fonts:');
-  console.log(fontList);
-  
-  // Update the font path to use the correct path found in the build logs
-  const fontPath = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf';
-  
-  if (fs.existsSync(fontPath)) {
-    console.log(`✅ Found DejaVu Sans font at ${fontPath}`);
-    process.env.FONT_PATH = fontPath;
-    process.env.FFMPEG_FONT_PATH = fontPath;
-  } else {
-    console.log('⚠️ DejaVu Sans font not found at expected path');
-    
-    // Try to find it using fc-match
-    try {
-      const matchedFont = execSync('fc-match "DejaVu Sans" --format="%{file}"').toString().trim();
-      console.log(`✅ Found DejaVu Sans font using fc-match at ${matchedFont}`);
-      process.env.FONT_PATH = matchedFont;
-      process.env.FFMPEG_FONT_PATH = matchedFont;
-    } catch (matchError) {
-      console.error('❌ Error finding font with fc-match:', matchError.message);
-    }
-  }
-} catch (error) {
-  console.error('❌ Error checking font configuration:', error.message);
-}
-
-// Create a script that will run the Alpine font fix script after deployment
-console.log('\nCreating post-deployment font fix script...');
-
-const postDeployScript = `
-#!/bin/bash
-echo "Running font fix for deployed function"
-cd /var/task
-node scripts/alpine-font-fix.js
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: 'FFmpeg WASM ready' })
+  };
+};
 `;
-
-try {
-  fs.writeFileSync(
-    path.join(process.cwd(), '.netlify', 'fix-fonts.sh'), 
-    postDeployScript
-  );
-  execSync(`chmod +x ${path.join(process.cwd(), '.netlify', 'fix-fonts.sh')}`);
-  console.log('✅ Created post-deployment font fix script');
+  
+  const functionPath = path.join(process.cwd(), 'netlify', 'functions', 'ffmpeg-wasm-init.js');
+  fs.writeFileSync(functionPath, initFFmpegFunction);
+  console.log('✅ Created WebAssembly FFmpeg initialization function');
 } catch (error) {
-  console.error('❌ Error creating post-deployment script:', error.message);
-}
-
-// Copy the font fix script to ensure it's available in the function
-console.log('\nCopying font fix script to function directory...');
-try {
-  fs.mkdirSync(path.join(process.cwd(), '.netlify', 'functions-internal'), { recursive: true });
-  fs.copyFileSync(
-    path.join(process.cwd(), 'scripts', 'alpine-font-fix.js'),
-    path.join(process.cwd(), '.netlify', 'functions-internal', 'alpine-font-fix.js')
-  );
-  fs.copyFileSync(
-    path.join(process.cwd(), 'scripts', 'ffmpeg-fix-image.js'),
-    path.join(process.cwd(), '.netlify', 'functions-internal', 'ffmpeg-fix-image.js')
-  );
-  console.log('✅ Copied fix scripts to functions directory');
-} catch (error) {
-  console.error('❌ Error copying scripts:', error.message);
-}
-
-// Skip FFmpeg test if it's not available
-if (ffmpegAvailable) {
-  console.log('\nTesting FFmpeg functionality...');
-  try {
-    execSync('node scripts/test-ffmpeg-image.js');
-    console.log('✅ FFmpeg test passed');
-  } catch (error) {
-    console.error('❌ FFmpeg test failed:', error.message);
-    console.log('⚠️ Continuing with build despite FFmpeg test failure');
-  }
-} else {
-  console.log('\n⚠️ Skipping FFmpeg test as FFmpeg is not available');
+  console.error('Error creating FFmpeg function:', error);
 }
 
 console.log('\n=== Build setup complete ==='); 

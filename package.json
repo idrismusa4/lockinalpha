@@ -10,10 +10,9 @@
     "vercel:prebuild": "node scripts/vercel-setup.js",
     "start": "next start",
     "lint": "next lint",
-    "netlify:build": "npm run prebuild && npm run build",
-    "vercel:build": "npm run vercel:prebuild && npm run build",
-    "prepare-deploy": "node scripts/prepare-deployment.js",
-    "next-build": "export FFMPEG_WASM_MODE=true && export NEXT_PUBLIC_USE_DOCKER=true && next build"
+    "netlify:build": "FFMPEG_WASM_MODE=true next build",
+    "vercel:build": "npm run vercel:prebuild && next build",
+    "prepare-deploy": "node scripts/prepare-deployment.js"
   },
   "dependencies": {
     "@aws-sdk/client-polly": "^3.758.0",

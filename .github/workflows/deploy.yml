@@ -3,23 +3,30 @@ name: Deploy to Heroku
 on:
   push:
     branches:
-      - main
+      - main  # Change this to your deployment branch if needed
+  workflow_dispatch:  # Allows manual deployment trigger
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
+      - name: Install Heroku CLI
+        run: |
+          curl https://cli-assets.heroku.com/install.sh | sh
 
       - name: Log in to Heroku Container Registry
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-        run: heroku container:login
+        run: |
+          echo $HEROKU_API_KEY | docker login --username=_ --password-stdin registry.heroku.com
 
       - name: Build and push Docker image
         env:
-          HEROKU_APP_NAME: "lockinalpha"
+          HEROKU_APP_NAME: "lockinalpha"  # Change to your Heroku app name
         run: |
           heroku container:push web --app $HEROKU_APP_NAME
 
@@ -28,3 +35,9 @@ jobs:
           HEROKU_APP_NAME: "lockinalpha"
         run: |
           heroku container:release web --app $HEROKU_APP_NAME
+
+      - name: Check logs
+        env:
+          HEROKU_APP_NAME: "lockinalpha"
+        run: |
+          heroku logs --tail --app $HEROKU_APP_NAME

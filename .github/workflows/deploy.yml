@@ -3,8 +3,7 @@ name: Deploy to Heroku
 on:
   push:
     branches:
-      - main  # Change this to your deployment branch if needed
-  workflow_dispatch:  # Allows manual deployment trigger
+      - main  # Change this if you're using a different branch
 
 jobs:
   deploy:
@@ -17,27 +16,17 @@ jobs:
       - name: Install Heroku CLI
         run: |
           curl https://cli-assets.heroku.com/install.sh | sh
-
-      - name: Log in to Heroku Container Registry
-        env:
-          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-        run: |
-          echo $HEROKU_API_KEY | docker login --username=_ --password-stdin registry.heroku.com
+          
+      - name: Login to Heroku Container Registry
+        run: echo "${{ secrets.HEROKU_API_KEY }}" | docker login --username=_ --password-stdin registry.heroku.com
 
       - name: Build and push Docker image
-        env:
-          HEROKU_APP_NAME: "lockinalpha"  # Change to your Heroku app name
         run: |
-          heroku container:push web --app $HEROKU_APP_NAME
+          docker build -t registry.heroku.com/${{ secrets.HEROKU_APP_NAME }}/web .
+          docker push registry.heroku.com/${{ secrets.HEROKU_APP_NAME }}/web
 
-      - name: Release the image
-        env:
-          HEROKU_APP_NAME: "lockinalpha"
-        run: |
-          heroku container:release web --app $HEROKU_APP_NAME
+      - name: Release the image on Heroku
+        run: heroku container:release web --app ${{ secrets.HEROKU_APP_NAME }}
 
-      - name: Check logs
-        env:
-          HEROKU_APP_NAME: "lockinalpha"
-        run: |
-          heroku logs --tail --app $HEROKU_APP_NAME
+      - name: Check Heroku logs (optional)
+        run: heroku logs --tail --app ${{ secrets.HEROKU_APP_NAME }}

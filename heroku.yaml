@@ -1,0 +1,6 @@
+build:
+  docker:
+    web: Dockerfile  # This tells Heroku to build the container using your Dockerfile
+
+run:
+  web: npm start  # Adjust this to your actual start command

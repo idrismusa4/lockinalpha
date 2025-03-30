@@ -1,0 +1,16 @@
+{
+  "name": "netlify-ffmpeg-plugin",
+  "version": "1.0.0",
+  "description": "Custom plugin to handle FFmpeg setup in Netlify",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"No tests specified\""
+  },
+  "keywords": [
+    "netlify",
+    "netlify-plugin",
+    "ffmpeg"
+  ],
+  "author": "LockIn",
+  "license": "MIT"
+} 

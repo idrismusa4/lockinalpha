@@ -19,10 +19,10 @@ interface ExecResult {
 
 // AWS Polly client configuration
 const pollyClient = new PollyClient({
-  region: process.env.AWS_REGION || 'us-east-1',
+  region: process.env.MY_AWS_REGION || 'us-east-1',
   credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    accessKeyId: process.env.MY_AWS_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.MY_AWS_SECRET_ACCESS_KEY || '',
   },
 });
 
@@ -216,7 +216,18 @@ function splitTextForTTS(text: string, maxChunkLength = 3000): string[] {
  */
 async function combineAudioFiles(inputFiles: string[], outputFile: string): Promise<void> {
   try {
-    // Check if ffmpeg is available
+    // First try to use the system FFmpeg from Docker if available
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        const { combineAudioFilesWithSystemFFmpeg } = await import('./videoFallbackService');
+        await combineAudioFilesWithSystemFFmpeg(inputFiles, outputFile);
+        return;
+      } catch (dockerFFmpegError) {
+        console.warn('Could not use Docker FFmpeg, falling back to normal method:', dockerFFmpegError);
+      }
+    }
+
+    // Fallback to the traditional ffmpeg check
     try {
       await exec('ffmpeg -version');
     } catch (ffmpegError) {

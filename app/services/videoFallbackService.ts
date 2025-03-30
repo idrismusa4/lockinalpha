@@ -9,20 +9,56 @@ import { updateJobStatus, updateJobProgress } from './jobService';
 import { convertScriptToSpeech } from './awsPollyService';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-
-// No direct import of Remotion packages at the top level
-// These will be dynamically imported in the tryRemotionRender function
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
 // Promisify exec for async/await usage
 const execAsync = promisify(exec);
 
-// Define paths for temporary files - use /tmp for Vercel
+// Define paths for temporary files - use /tmp for serverless
 const TMP_DIR = process.env.NODE_ENV === 'production' 
   ? '/tmp' 
   : os.tmpdir();
 
 // Flag for checking if we're in a serverless environment
-const IS_SERVERLESS = process.env.VERCEL === '1';
+const IS_SERVERLESS = process.env.VERCEL === '1' || process.env.NETLIFY === '1';
+
+// Flag to check if we're in a Docker environment (which means we have system FFmpeg)
+const HAS_SYSTEM_FFMPEG = process.env.NODE_ENV === 'production' && !IS_SERVERLESS;
+const IS_NETLIFY = process.env.NETLIFY === 'true';
+
+// System FFmpeg detection improved for Docker environments
+async function isSystemFFmpegAvailable(): Promise<boolean> {
+  try {
+    // Check if NETLIFY_FFMPEG_PATH is set in the environment
+    const ffmpegEnvPath = process.env.NETLIFY_FFMPEG_PATH;
+    if (ffmpegEnvPath) {
+      try {
+        console.log(`Checking FFmpeg at env path: ${ffmpegEnvPath}`);
+        const { stdout } = await execAsync(`${ffmpegEnvPath} -version`);
+        console.log(`FFmpeg found at ${ffmpegEnvPath}: ${stdout.split('\n')[0]}`);
+        return true;
+      } catch (envPathError) {
+        console.error(`Error checking FFmpeg at ${ffmpegEnvPath}:`, envPathError);
+        // Continue to try system FFmpeg
+      }
+    }
+
+    // Try the system FFmpeg
+    console.log('Checking system FFmpeg...');
+    const { stdout } = await execAsync('ffmpeg -version');
+    console.log(`System FFmpeg found: ${stdout.split('\n')[0]}`);
+    return true;
+  } catch (error) {
+    console.error('System FFmpeg not available:', error);
+    return false;
+  }
+}
+
+// Determine if we're in a Netlify Docker environment
+const isNetlify = process.env.NETLIFY === 'true';
+const isDockerEnvironment = isNetlify; // Assuming we're using Docker for Netlify
+const isServerlessEnvironment = process.env.VERCEL === '1' || (isNetlify && !isDockerEnvironment);
 
 // Define proper types for the module
 interface VideoRenderParams {
@@ -92,6 +128,35 @@ type RemotionRendererType = {
   }>;
 };
 
+// Initialize FFmpeg instance
+let ffmpegInstance: FFmpeg | null = null;
+
+/**
+ * Creates and loads an FFmpeg instance with proper configuration
+ */
+async function getFFmpeg(): Promise<FFmpeg> {
+  if (ffmpegInstance) {
+    return ffmpegInstance;
+  }
+
+  try {
+    ffmpegInstance = new FFmpeg();
+    
+    // Load FFmpeg core and codecs
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+    await ffmpegInstance.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    });
+    
+    console.log('FFmpeg WASM loaded successfully');
+    return ffmpegInstance;
+  } catch (error) {
+    console.error('Error loading FFmpeg:', error);
+    throw new Error('Failed to load FFmpeg WASM');
+  }
+}
+
 /**
  * A fallback video rendering service that creates a video using
  * enhanced visual elements, animations and the LockIn branding
@@ -141,12 +206,9 @@ export async function renderVideoFallback({
       throw new Error(`Failed to generate audio: ${audioError instanceof Error ? audioError.message : String(audioError)}`);
     }
     
-    // In a serverless environment, we might not have FFmpeg available
-    // But we'll still try to create a video using Remotion
+    // Always attempt to create a video
     let isAudioOnly = false;
     
-    // ALWAYS attempt to create a video file, even if FFmpeg isn't available
-    // We'll use our Remotion renderer which doesn't require FFmpeg
     console.log('Creating enhanced video with animations...');
     try {
       // First try to use the Remotion renderer
@@ -162,11 +224,25 @@ export async function renderVideoFallback({
         await updateJobProgress(jobId, 50);
         onProgress(50);
         
-        // Creating slides phase
+        // For serverless environments, we'll use a simpler approach
+        // that doesn't require FFmpeg installation
         console.log('Generating slides for fallback video...');
-        await createEnhancedSlideshowFromScript(outputFile, script, audioFile);
         
-        // Update progress after slideshow creation
+        try {
+          // In serverless, we won't attempt to create a video - just use audio
+          if (IS_SERVERLESS) {
+            console.log('Running in serverless environment, falling back to audio-only mode');
+            isAudioOnly = true;
+          } else {
+            // Only try to create a video in non-serverless environments
+            await createSimpleSlideshowFromScript(outputFile, script, audioFile);
+          }
+        } catch (slideshowError) {
+          console.error('Error creating simple slideshow:', slideshowError);
+          isAudioOnly = true;
+        }
+        
+        // Update progress after slideshow creation attempt
         await updateJobProgress(jobId, 60);
         onProgress(60);
       }
@@ -177,21 +253,14 @@ export async function renderVideoFallback({
         console.log(`Video file exists with size: ${videoStats.size} bytes`);
         
         if (videoStats.size < 10000) { // Less than 10KB is suspicious for a video
-          console.log('Video file is too small, may be corrupted. Creating a new one.');
-          await createEnhancedSlideshowFromScript(outputFile, script, audioFile);
+          console.log('Video file is too small, may be corrupted. Using audio-only mode.');
+          isAudioOnly = true;
+        } else {
+          isAudioOnly = false;
         }
       } else {
-        console.log('Video file was not created, creating a new one.');
-        await createEnhancedSlideshowFromScript(outputFile, script, audioFile);
-      }
-      
-      // Final check - if all video generation methods failed, we'll fall back to audio only
-      if (!fs.existsSync(outputFile) || fs.statSync(outputFile).size < 10000) {
-        console.log('All video generation methods failed, falling back to audio only.');
+        console.log('Video file was not created, falling back to audio only.');
         isAudioOnly = true;
-      } else {
-        console.log('Successfully created video file with size:', fs.statSync(outputFile).size, 'bytes');
-        isAudioOnly = false;
       }
       
       await updateJobProgress(jobId, 70);
@@ -265,61 +334,73 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
   try {
     console.log('Attempting to render video using Remotion...');
     
-    // Skip Remotion rendering in serverless environments like Vercel
-    const isServerless = process.env.VERCEL === '1' || process.env.AWS_LAMBDA_FUNCTION_NAME;
-    if (isServerless) {
-      console.log('Detected serverless environment. Skipping Remotion rendering.');
-      return false;
-    }
-    
-    // Try to dynamically import Remotion packages
-    let RemotionBundler: RemotionBundlerType | null = null;
-    let RemotionRenderer: RemotionRendererType | null = null;
-    
+    // Import required modules dynamically
+    let bundleImport;
+    let renderImport;
     try {
-      // Using dynamic import with catch to handle missing packages
-      const bundlerModule = await import('@remotion/bundler').catch(err => {
-        console.log('Could not import @remotion/bundler:', err.message);
-        return null;
-      });
-      
-      const rendererModule = await import('@remotion/renderer').catch(err => {
-        console.log('Could not import @remotion/renderer:', err.message);
-        return null;
-      });
-      
-      RemotionBundler = bundlerModule as RemotionBundlerType;
-      RemotionRenderer = rendererModule as RemotionRendererType;
-    } catch (importError) {
-      console.log('Could not import Remotion packages. This is expected in some environments.', importError);
-      return false;
-    }
-
-    if (!RemotionBundler || !RemotionRenderer) {
-      console.log('Could not import Remotion packages. Falling back to basic video creation.');
+      bundleImport = await import('@remotion/bundler');
+      renderImport = await import('@remotion/renderer');
+    } catch (error) {
+      console.error('Error importing Remotion modules:', error);
       return false;
     }
     
-    const { bundle } = RemotionBundler;
-    const { renderMedia, selectComposition } = RemotionRenderer;
+    const bundle = bundleImport.bundle;
+    const renderMedia = renderImport.renderMedia;
+    const selectComposition = renderImport.selectComposition;
     
-    // Get the absolute path to the Remotion entry point
-    const entryPoint = path.join(process.cwd(), 'app/remotion/index.tsx');
+    // Create temp dir for temporary files
+    const tmpDir = fs.mkdirSync(path.join(os.tmpdir(), `remotion-${Date.now()}`), { recursive: true });
     
+    // Set the entry point to the root.tsx file that contains registerRoot
+    // This is the key fix for the Remotion error
+    const entryPoint = path.join(process.cwd(), 'app', 'remotion', 'root.tsx');
+    
+    // If the file doesn't exist, create it by copying the existing index.tsx
     if (!fs.existsSync(entryPoint)) {
-      console.error(`Remotion entry point not found at: ${entryPoint}`);
-      return false;
+      console.log('Remotion root file not found, creating one...');
+      try {
+        // Check if index.tsx exists
+        const indexPath = path.join(process.cwd(), 'app', 'remotion', 'index.tsx');
+        if (fs.existsSync(indexPath)) {
+          // Create a simple root file that imports from index.tsx
+          const rootContent = `
+            import { registerRoot } from 'remotion';
+            import { VideoLecture } from './VideoLecture';
+            import { Composition } from 'remotion';
+            
+            const Root = () => {
+              return (
+                <Composition
+                  id="VideoLecture"
+                  component={VideoLecture}
+                  width={1280}
+                  height={720}
+                  fps={30}
+                  durationInFrames={300}
+                  defaultProps={{
+                    script: "Default script content",
+                    audioUrl: ""
+                  }}
+                />
+              );
+            };
+            
+            registerRoot(Root);
+          `;
+          fs.writeFileSync(entryPoint, rootContent);
+          console.log('Created Remotion root file');
+        } else {
+          console.error('Remotion index.tsx file not found');
+          return false;
+        }
+      } catch (createError) {
+        console.error('Error creating Remotion root file:', createError);
+        return false;
+      }
     }
     
-    // Verify we have the audio file
-    if (!fs.existsSync(audioPath)) {
-      console.error(`Audio file not found at: ${audioPath}`);
-      return false;
-    }
-    
-    // Create a simplified temporary copy of the audio file with a predictable name
-    // This helps resolve audio file access issues in Remotion
-    const tmpDir = path.dirname(outputPath);
+    // Copy the audio file to the temp directory
     const tmpAudioPath = path.join(tmpDir, `audio-${path.basename(audioPath)}`);
     fs.copyFileSync(audioPath, tmpAudioPath);
     
@@ -327,7 +408,8 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
     console.log(`Bundling Remotion project from: ${entryPoint}`);
     const bundleLocation = await bundle({
       entryPoint,
-      // Add webpack override to handle potential bundling issues
+      // Add ignoreRegisterRootWarning to avoid errors if the file isn't set up correctly
+      ignoreRegisterRootWarning: true,
       webpackOverride: (config) => {
         return {
           ...config,
@@ -364,292 +446,93 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
     // Select the composition to render
     const composition = await selectComposition({
       serveUrl: bundleLocation,
-      id: 'VideoLecture', // Our composition ID defined in index.tsx
+      id: 'VideoLecture',
       inputProps: {
         script,
-        audioUrl: tmpAudioPath, // Use the local path for audio
+        audioUrl: tmpAudioPath,
       },
     });
     
+    // Ensure the output directory exists
+    const outputDir = path.dirname(outputPath);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    
     // Render the video
+    console.log(`Rendering video to ${outputPath}...`);
     await renderMedia({
       composition,
       serveUrl: bundleLocation,
       codec: 'h264',
       outputLocation: outputPath,
-      props: {
-        script,
-        audioUrl: tmpAudioPath,
-      },
+      imageFormat: 'jpeg',
       durationInFrames,
       fps,
-      imageFormat: 'jpeg',
-      chromiumOptions: {
-        disableWebSecurity: true,
-        headless: true,
-        args: ['--disable-web-security', '--no-sandbox', '--disable-setuid-sandbox'],
-      },
-      pixelFormat: 'yuv420p', // Standard format for better compatibility
+      pixelFormat: 'yuv420p',
     });
     
-    // Clean up the temporary audio file
-    try {
-      if (fs.existsSync(tmpAudioPath)) {
-        fs.unlinkSync(tmpAudioPath);
-      }
-    } catch (cleanupErr) {
-      console.warn('Failed to clean up temporary audio file:', cleanupErr);
-    }
-    
-    // Check if the file was created
-    if (fs.existsSync(outputPath)) {
-      const stats = fs.statSync(outputPath);
-      console.log(`Remotion successfully rendered video to: ${outputPath} (${stats.size} bytes)`);
-      if (stats.size < 10000) { // Less than 10KB is suspicious for a video
-        console.error('Remotion output file is too small, may be corrupted.');
-        return false;
-      }
-      return true;
-    } else {
-      console.error('Remotion did not produce an output file');
-      return false;
-    }
+    console.log('Remotion video rendering completed successfully');
+    return true;
   } catch (error) {
     console.error('Error rendering with Remotion:', error);
     return false;
   }
 }
 
-/**
- * Creates an enhanced slideshow video from script with visual elements
- */
-async function createEnhancedSlideshowFromScript(outputPath: string, script: string, audioPath: string): Promise<void> {
-  // Create a temporary directory for the slides
-  const tmpDir = path.dirname(outputPath);
-  const slidesDir = path.join(tmpDir, 'slides');
-  
-  if (!fs.existsSync(slidesDir)) {
-    fs.mkdirSync(slidesDir, { recursive: true });
-  }
-  
+// Enhancement for createSimpleSlideshowFromScript with improved Docker support
+async function createSimpleSlideshowFromScript(outputPath: string, script: string, audioPath: string): Promise<void> {
   try {
-    console.log('Starting enhanced slideshow creation...');
+    // Check for system FFmpeg first
+    const hasSystemFFmpeg = await isSystemFFmpegAvailable();
     
-    // Create a title screen
-    const title = script.split('\n')[0].replace(/^#+\s*/, '');
-    const titlePath = path.join(slidesDir, 'title.png');
-    await createTitleImage(titlePath, title);
-    
-    // Split script into logical chunks
-    const paragraphs = script
-      .split('\n\n')
-      .filter(p => p.trim().length > 0);
-    
-    // Create images for each paragraph
-    const slideImages = [titlePath];
-    
-    // Create each slide - reporting progress as we go
-    const totalSlides = paragraphs.length;
-    console.log(`Creating ${totalSlides} slides...`);
-    
-    for (let i = 0; i < paragraphs.length; i++) {
-      const slidePath = path.join(slidesDir, `slide-${i + 1}.png`);
-      await createSlideImage(slidePath, paragraphs[i], i + 1);
-      slideImages.push(slidePath);
-    }
-    
-    // Use FFmpeg to create a slideshow video with the audio
-    console.log('Creating improved slideshow video with FFmpeg...');
-    
-    // Check if audio file exists and has content
-    if (!fs.existsSync(audioPath)) {
-      throw new Error(`Audio file does not exist at path: ${audioPath}`);
-    }
-    
-    // Get audio duration
-    const { stdout: durationOutput } = await execAsync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`);
-    const audioDuration = parseFloat(durationOutput);
-    console.log(`Audio duration: ${audioDuration} seconds`);
-    
-    if (isNaN(audioDuration) || audioDuration <= 0) {
-      throw new Error('Invalid audio duration detected. Cannot create video.');
-    }
-    
-    // Create a file with the list of images and their durations
-    const imageListPath = path.join(tmpDir, 'images.txt');
-    
-    // Calculate slide duration - ensure it's reasonable based on audio length
-    const slideCount = slideImages.length;
-    const slideDuration = Math.max(3, Math.min(10, audioDuration / slideCount));
-    
-    console.log(`Using ${slideDuration.toFixed(2)} seconds per slide for ${slideCount} slides`);
-    
-    // Create the image list with proper durations
-    const imageListContent = slideImages
-      .map((img, index) => {
-        // Last slide needs special handling
-        if (index === slideImages.length - 1) {
-          return `file '${img.replace(/'/g, "'\\''")}'\nduration ${slideDuration}`;
-        }
-        return `file '${img.replace(/'/g, "'\\''")}'\nduration ${slideDuration}`;
-      })
-      .join('\n');
-    
-    fs.writeFileSync(imageListPath, imageListContent);
-    console.log('Created image list file for FFmpeg');
-    
-    // Create a more robust FFmpeg command with explicit audio mapping
-    const ffmpegCmd = `ffmpeg -f concat -safe 0 -i "${imageListPath}" -i "${audioPath}" -map 0:v -map 1:a -vf "fps=24,format=yuv420p" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -shortest -pix_fmt yuv420p -t ${audioDuration} "${outputPath}"`;
-    
-    console.log(`Executing FFmpeg command: ${ffmpegCmd}`);
-    const { stdout, stderr } = await execAsync(ffmpegCmd);
-    
-    if (stderr) {
-      console.log('FFmpeg stderr output:', stderr);
-    }
-    
-    // Verify the output file
-    if (!fs.existsSync(outputPath)) {
-      throw new Error('FFmpeg did not produce an output file');
-    }
-    
-    const fileStats = fs.statSync(outputPath);
-    console.log(`Video file created: ${outputPath} (${fileStats.size} bytes)`);
-    
-    if (fileStats.size < 10000) { // Less than 10KB is suspicious
-      throw new Error(`Output file is too small (${fileStats.size} bytes) and may be corrupted`);
-    }
-    
-    console.log(`Successfully created enhanced slideshow video at: ${outputPath} (${fileStats.size} bytes)`);
-    
-    // Clean up the temporary files
-    try {
-      slideImages.forEach(img => {
-        if (fs.existsSync(img)) {
-          fs.unlinkSync(img);
-        }
-      });
+    if (hasSystemFFmpeg) {
+      console.log('Using system FFmpeg to create slideshow');
       
-      if (fs.existsSync(imageListPath)) {
-        fs.unlinkSync(imageListPath);
-      }
-      
-      if (fs.existsSync(slidesDir)) {
-        fs.rmdirSync(slidesDir, { recursive: true });
-      }
-      console.log('Cleaned up temporary files');
-    } catch (cleanupError) {
-      console.warn('Warning: Failed to clean up some temporary files:', cleanupError);
-    }
-    
-  } catch (error) {
-    console.error('Error creating enhanced slideshow:', error);
-    throw error;
-  }
-}
+      // Get FFmpeg path - use NETLIFY_FFMPEG_PATH if available, otherwise just 'ffmpeg'
+      const ffmpegPath = process.env.NETLIFY_FFMPEG_PATH || 'ffmpeg';
 
-/**
- * Creates a title image with nice visual design
- */
-async function createTitleImage(outputPath: string, title: string): Promise<void> {
-  try {
-    // More thorough sanitization for ffmpeg
-    const sanitizedTitle = title
-      .replace(/['"\\*:]/g, '')  // Remove problematic characters
-      .replace(/[^a-zA-Z0-9\s.,?!()-]/g, '')  // Keep only safe characters
-      .trim()
-      .substr(0, 80); // Limit length to avoid command issues
-    
-    // Skip trying to render text since fontconfig causes issues on Windows
-    // Create a visually appealing gradient background instead
-    const bgColor = '#1a2a6c';
-    const gradientColor = '#2a4a9c';
-    
-    // Create a gradient effect with boxes instead of text
-    const ffmpegCmd = `ffmpeg -f lavfi -i "color=c=${bgColor}:s=1280x720" -vf "drawbox=x=0:y=0:w=1280:h=720:color=${gradientColor}@0.5:t=fill,drawbox=x=40:y=40:w=1200:h=150:color=${bgColor}@0.7:t=fill,drawbox=x=40:y=250:w=1200:h=100:color=${bgColor}@0.9:t=fill" -frames:v 1 "${outputPath}"`;
-    
-    console.log('Executing title image command');
-    await execAsync(ffmpegCmd);
-    
-    if (!fs.existsSync(outputPath)) {
-      throw new Error('Failed to create title image');
-    }
-    
-    console.log(`Title image created successfully at: ${outputPath}`);
-  } catch (error) {
-    console.error('Error creating title image:', error);
-    
-    // Fallback method - Create a simpler image if the first method fails
-    try {
-      // Create a very simple title image with minimal commands
-      const simpleCmd = `ffmpeg -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
-      await execAsync(simpleCmd);
+      // Create a temporary image with blue background and text
+      const tempImgPath = path.join(os.tmpdir(), `slide-${Date.now()}.png`);
       
-      if (!fs.existsSync(outputPath)) {
-        throw new Error('Failed to create even a simple title image');
+      // Use the -frames:v 1 and -update flags to create a single image
+      // Also make sure we're using the correct font path from environment variable
+      const fontPath = process.env.FONT_PATH || process.env.FFMPEG_FONT_PATH || '/usr/share/fonts/dejavu/DejaVuSans.ttf';
+      console.log(`Using font path: ${fontPath}`);
+      
+      // Generate a blue background with text using FFmpeg with the correct arguments
+      const createImageCmd = `${ffmpegPath} -f lavfi -i color=c=blue:s=1280x720:d=1 -vf "drawtext=fontfile=${fontPath}:text='${script.substring(0, 100)}...':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=(h-text_h)/2" -frames:v 1 -update 1 ${tempImgPath}`;
+      
+      console.log('Creating background image with text...');
+      console.log(`Executing command: ${createImageCmd}`);
+      await execAsync(createImageCmd);
+      
+      // Make sure the file was created
+      if (!fs.existsSync(tempImgPath)) {
+        console.error(`Image was not created at ${tempImgPath}`);
+        throw new Error(`Failed to create image at ${tempImgPath}`);
+      } else {
+        console.log(`Successfully created image at ${tempImgPath} (${fs.statSync(tempImgPath).size} bytes)`);
       }
       
-      console.log(`Simple fallback title image created at: ${outputPath}`);
-    } catch (fallbackError) {
-      console.error('Even fallback title image creation failed:', fallbackError);
-      throw error; // Throw the original error
-    }
-  }
-}
-
-/**
- * Creates a slide image for a paragraph of text
- */
-async function createSlideImage(outputPath: string, text: string, slideNumber: number): Promise<void> {
-  try {
-    // More thorough sanitization for text used in ffmpeg command
-    const sanitizedText = text
-      .substr(0, 150)  // Limit length further to avoid command issues
-      .replace(/['"\\*]/g, '')  // Remove problematic characters
-      .replace(/[\n\r:]/g, ' ')  // Replace newlines and colons with spaces
-      .replace(/[^a-zA-Z0-9\s.,?!()-]/g, '')  // Keep only safe characters
-      .trim();
-    
-    // Use different colors for different slides to add visual interest
-    const colorSchemes = [
-      { bg: '#1a2a6c', accent: '#2a3a8c' },  // Blue
-      { bg: '#2c3e50', accent: '#34495e' },  // Dark blue
-      { bg: '#27ae60', accent: '#2ecc71' },  // Green
-      { bg: '#c0392b', accent: '#e74c3c' },  // Red
-      { bg: '#8e44ad', accent: '#9b59b6' }   // Purple
-    ];
-    
-    // Select a color scheme based on slideNumber
-    const scheme = colorSchemes[slideNumber % colorSchemes.length];
-    
-    // Create a visually interesting slide with visual elements instead of text
-    const ffmpegCmd = `ffmpeg -f lavfi -i "color=c=${scheme.bg}:s=1280x720" -vf "drawbox=x=0:y=0:w=1280:h=720:color=${scheme.accent}@0.3:t=fill,drawbox=x=0:y=0:w=1280:h=100:color=${scheme.bg}@0.8:t=fill,drawbox=x=0:y=620:w=1280:h=100:color=${scheme.bg}@0.8:t=fill,drawbox=x=${(slideNumber % 4) * 250 + 100}:y=${200 + (slideNumber % 3) * 100}:w=200:h=200:color=${scheme.accent}@0.6:t=fill" -frames:v 1 "${outputPath}"`;
-    
-    await execAsync(ffmpegCmd);
-    
-    if (!fs.existsSync(outputPath)) {
-      throw new Error(`Failed to create slide image #${slideNumber}`);
-    }
-    
-    console.log(`Slide image #${slideNumber} created successfully at: ${outputPath}`);
-  } catch (error) {
-    console.error(`Error creating slide image #${slideNumber}:`, error);
-    
-    // Fallback method - Create a simpler image if the first method fails
-    try {
-      // Create a very simple slide image with minimal commands
-      const simpleCmd = `ffmpeg -f lavfi -i color=c=blue:s=1280x720 -frames:v 1 "${outputPath}"`;
-      await execAsync(simpleCmd);
+      // Combine image and audio to create video
+      console.log('Combining image and audio to create video...');
+      const createVideoCmd = `${ffmpegPath} -loop 1 -i ${tempImgPath} -i ${audioPath} -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest ${outputPath}`;
+      console.log(`Executing command: ${createVideoCmd}`);
+      await execAsync(createVideoCmd);
       
-      if (!fs.existsSync(outputPath)) {
-        throw new Error(`Failed to create even a simple slide image #${slideNumber}`);
+      // Clean up temporary files
+      if (fs.existsSync(tempImgPath)) {
+        fs.unlinkSync(tempImgPath);
       }
       
-      console.log(`Simple fallback slide image #${slideNumber} created at: ${outputPath}`);
-    } catch (fallbackError) {
-      console.error(`Even fallback slide creation failed for #${slideNumber}:`, fallbackError);
-      throw error; // Throw the original error
+      console.log(`Video slideshow created successfully at ${outputPath}`);
+    } else {
+      throw new Error('FFmpeg not available for video creation');
     }
+  } catch (error) {
+    console.error('Error creating slideshow:', error);
+    throw new Error(`Failed to create video slideshow: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -705,5 +588,63 @@ async function uploadToSupabase(
   } catch (err) {
     console.error('Error in uploadToSupabase:', err);
     throw err;
+  }
+}
+
+// Add this function to handle audio file combination with system FFmpeg
+export async function combineAudioFilesWithSystemFFmpeg(
+  audioChunkPaths: string[], 
+  outputPath: string
+): Promise<void> {
+  try {
+    // Check if system FFmpeg is available
+    const systemFFmpegAvailable = await isSystemFFmpegAvailable();
+    if (!systemFFmpegAvailable) {
+      throw new Error('System FFmpeg is required but not available');
+    }
+    
+    console.log('Using system FFmpeg to combine audio files');
+    
+    // Get the FFmpeg path - use environment variable if available
+    const ffmpegPath = process.env.NETLIFY_FFMPEG_PATH || 'ffmpeg';
+    console.log(`Using FFmpeg at: ${ffmpegPath}`);
+    
+    // Create a temporary file listing all input files
+    const fileListPath = path.join(os.tmpdir(), `audio_files_${Date.now()}.txt`);
+    
+    // Create file content for FFmpeg concat
+    const fileListContent = audioChunkPaths.map(
+      filePath => `file '${filePath.replace(/'/g, "\\'")}'`
+    ).join('\n');
+    
+    // Write the file list
+    fs.writeFileSync(fileListPath, fileListContent);
+    console.log(`Created file list at: ${fileListPath}`);
+    console.log(`File list contains ${audioChunkPaths.length} files`);
+    
+    // Build and execute the FFmpeg command
+    const command = `${ffmpegPath} -f concat -safe 0 -i "${fileListPath}" -c copy "${outputPath}"`;
+    console.log(`Executing FFmpeg command: ${command}`);
+    
+    const { stdout, stderr } = await execAsync(command);
+    
+    if (stderr) {
+      console.warn('FFmpeg stderr output:', stderr);
+    }
+    
+    if (stdout) {
+      console.log('FFmpeg stdout output:', stdout);
+    }
+    
+    // Clean up the temporary file
+    if (fs.existsSync(fileListPath)) {
+      fs.unlinkSync(fileListPath);
+      console.log('Removed temporary file list');
+    }
+    
+    console.log(`Successfully combined ${audioChunkPaths.length} audio files to: ${outputPath}`);
+  } catch (error) {
+    console.error('Error combining audio files with system FFmpeg:', error);
+    throw new Error(`Failed to combine audio files: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

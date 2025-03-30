@@ -2,19 +2,23 @@ import type { Metadata } from "next";
 import { Lexend } from "next/font/google";
 import "./globals.css";
 import Link from "next/link";
-import { ThemeProvider } from "@/components/ui/theme-provider";
-import { Toaster } from "@/components/ui/toaster";
+import { Providers } from "./providers";
 import { initializeSupabaseStorage } from "./supabase";
 import { Analytics } from "@vercel/analytics/react"
 import { SpeedInsights } from '@vercel/speed-insights/next';
 
-// Only initialize on the server and only once
+// Ensure Supabase storage is initialized on the server side
 if (typeof window === 'undefined') {
   try {
-    console.log('Server-side initialization of Supabase storage...');
-    initializeSupabaseStorage();
+    console.log('Server-side initialization of Supabase storage buckets...');
+    // Use this pattern to ensure the promise is handled
+    initializeSupabaseStorage().then(() => {
+      console.log('Supabase storage buckets initialized successfully');
+    }).catch((error) => {
+      console.error('Failed to initialize Supabase storage buckets:', error);
+    });
   } catch (error) {
-    console.error('Failed to initialize Supabase storage:', error);
+    console.error('Error during Supabase storage initialization:', error);
   }
 }
 
@@ -31,11 +35,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en">
       <body className={lexend.className}>
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
-        <Analytics />
-        <SpeedInsights />
+        <Providers>
+          <Analytics />
+          <SpeedInsights />
           <div className="flex min-h-screen flex-col">
             <header className="border-b">
               <div className="container flex h-16 items-center justify-between py-4">
@@ -66,8 +70,7 @@ export default function RootLayout({
               </div>
             </footer>
           </div>
-          <Toaster />
-        </ThemeProvider>
+        </Providers>
       </body>
     </html>
   );

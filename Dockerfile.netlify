@@ -1,0 +1,37 @@
+FROM node:18-alpine
+
+# Set working directory
+WORKDIR /usr/src/app
+
+# Install required fonts and FFmpeg dependencies
+RUN apk update && \
+    apk add --no-cache ffmpeg fontconfig ttf-dejavu ttf-liberation ttf-opensans && \
+    mkdir -p /usr/share/fonts/truetype/dejavu && \
+    ln -s /usr/share/fonts/dejavu/DejaVuSans.ttf /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf && \
+    fc-cache -f
+
+# Set environment variables
+ENV FONTCONFIG_PATH=/etc/fonts
+ENV REMOTION_FONT_FAMILY=DejaVuSans
+ENV NODE_ENV=production
+ENV FONT_PATH=/usr/share/fonts/dejavu/DejaVuSans.ttf
+ENV FFMPEG_FONT_PATH=/usr/share/fonts/dejavu/DejaVuSans.ttf
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Copy package files and install dependencies
+COPY package*.json ./
+RUN npm ci
+
+# Copy the rest of your application code
+COPY . .
+
+# Make scripts executable
+RUN chmod +x scripts/*.js
+RUN chmod +x docker-entrypoint.sh
+
+# Build the Next.js application
+RUN node scripts/alpine-font-fix.js
+RUN npm run build
+
+# Start the Next.js production server
+CMD ["npm", "start"] 

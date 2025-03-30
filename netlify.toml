@@ -1,0 +1,35 @@
+# Standard Next.js build configuration
+[build]
+  command = "npm run netlify:build"
+  publish = ".next"
+
+[build.environment]
+  NODE_ENV = "production"
+  NETLIFY = "true"
+  NODE_VERSION = "18"
+  NEXT_TELEMETRY_DISABLED = "1"
+  # Enable WebAssembly FFmpeg as a fallback
+  FFMPEG_WASM_MODE = "true"
+
+# Install the Netlify Next.js plugin
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# This redirects all requests to the Next.js application
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/next"
+  status = 200
+  
+# Use Netlify Functions configuration to increase timeouts and memory
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  external_node_modules = ["@ffmpeg/ffmpeg", "@ffmpeg/util"]
+  
+[functions."api/*"]
+  included_files = ["**/*.wasm", "node_modules/@ffmpeg/core/**"]
+  
+[functions."api/generateVideo/*"]
+  timeout = 300
+  memory = 3008 

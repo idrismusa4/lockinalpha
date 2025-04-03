@@ -11,6 +11,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { fetchMediaForScript, FetchedMedia } from './mediaFetchService';
 
 // Promisify exec for async/await usage
 const execAsync = promisify(exec);
@@ -200,10 +201,112 @@ export async function renderVideoFallback({
       await updateJobProgress(jobId, 30);
       onProgress(30);
       
-      console.log('Audio generation completed');
-    } catch (audioError) {
+      console.log(`Audio generated successfully at ${audioFile}`);
+    } catch (audioError: any) {
       console.error('Error generating audio:', audioError);
-      throw new Error(`Failed to generate audio: ${audioError instanceof Error ? audioError.message : String(audioError)}`);
+      await updateJobStatus(jobId, { status: 'failed', error: `Audio generation failed: ${audioError.message}` });
+      throw new Error(`Audio generation failed: ${audioError.message}`);
+    }
+    
+    // Fetch media for the script paragraphs
+    console.log('Fetching media assets for script...');
+    await updateJobProgress(jobId, 35);
+    onProgress(35);
+    
+    let scriptMedia: FetchedMedia[][] = [];
+    try {
+      // Fetch multiple media items per slide for richer presentations
+      scriptMedia = await fetchMediaForScript(script, 2); // Fetch up to 2 media items per slide
+      console.log(`Fetched ${scriptMedia.flat().length} media assets for the script`);
+      
+      // Log more detailed info about media for debugging
+      const mediaDetails = scriptMedia.map((slidesMedia, i) => ({
+        slideIndex: i,
+        hasMedia: slidesMedia && slidesMedia.length > 0,
+        mediaCount: slidesMedia ? slidesMedia.length : 0,
+        firstMediaUrl: slidesMedia && slidesMedia[0] ? slidesMedia[0].url : 'none',
+        mediaSizes: slidesMedia ? slidesMedia.map((m: FetchedMedia) => ({ 
+          width: m?.width, 
+          height: m?.height,
+          aspectRatio: m?.width && m?.height ? (m.width / m.height).toFixed(2) : 'unknown'
+        })) : []
+      }));
+      
+      console.log('Media details by slide:', mediaDetails);
+      
+      // Verify that media items have reasonable sizes for video rendering
+      const checkMediaSizes = () => {
+        let oversizedMedia = 0;
+        
+        scriptMedia.forEach((slideMedia, index) => {
+          if (!slideMedia) return;
+          
+          slideMedia.forEach((media: FetchedMedia, mediaIndex: number) => {
+            if (!media || !media.width || !media.height) return;
+            
+            const MAX_DIMENSION = 1200; // Maximum reasonable dimension for video
+            
+            if (media.width > MAX_DIMENSION || media.height > MAX_DIMENSION) {
+              oversizedMedia++;
+              
+              // Calculate new dimensions preserving aspect ratio
+              const aspectRatio = media.width / media.height;
+              if (media.width > media.height) {
+                media.width = MAX_DIMENSION;
+                media.height = Math.round(MAX_DIMENSION / aspectRatio);
+              } else {
+                media.height = MAX_DIMENSION;
+                media.width = Math.round(MAX_DIMENSION * aspectRatio);
+              }
+              
+              console.log(`Resized oversized media on slide ${index}, item ${mediaIndex} to ${media.width}x${media.height}`);
+            }
+          });
+        });
+        
+        if (oversizedMedia > 0) {
+          console.log(`Resized ${oversizedMedia} oversized media items for better performance`);
+        }
+      };
+      
+      // Check and resize oversized media
+      checkMediaSizes();
+      
+      await updateJobProgress(jobId, 40);
+      onProgress(40);
+    } catch (mediaError) {
+      console.error('Error fetching media assets:', mediaError);
+      // Continue without media - it's not critical, we can still generate the video
+      console.log('Continuing with video generation without media assets...');
+    }
+    
+    // Try to use Remotion for rendering first
+    console.log('Attempting to render video using Remotion...');
+    try {
+      const success = await tryRemotionRender(outputFile, script, audioFile, scriptMedia);
+      if (success) {
+        console.log(`Remotion render successful at ${outputFile}`);
+        
+        await updateJobProgress(jobId, 90);
+        onProgress(90);
+        
+        // Upload the video to Supabase
+        const videoUrl = await uploadToSupabase(
+          outputFile, 
+          jobId, 
+          'mp4', 
+          'video/mp4', 
+          false, 
+          'videos'
+        );
+        
+        await updateJobProgress(jobId, 100);
+        onProgress(100);
+        
+        return videoUrl;
+      }
+    } catch (remotionError) {
+      console.error('Remotion render failed:', remotionError);
     }
     
     // Always attempt to create a video
@@ -213,16 +316,16 @@ export async function renderVideoFallback({
     try {
       // First try to use the Remotion renderer
       console.log('Attempting to render with Remotion...');
-      await updateJobProgress(jobId, 40);
-      onProgress(40);
+      await updateJobProgress(jobId, 50);
+      onProgress(50);
       
-      const useRemotionRenderer = await tryRemotionRender(outputFile, script, audioFile);
+      const useRemotionRenderer = await tryRemotionRender(outputFile, script, audioFile, scriptMedia);
       
       if (!useRemotionRenderer) {
         // Fallback to simple slideshow if Remotion fails
         console.log('Remotion rendering failed, falling back to slideshow generation...');
-        await updateJobProgress(jobId, 50);
-        onProgress(50);
+        await updateJobProgress(jobId, 60);
+        onProgress(60);
         
         // For serverless environments, we'll use a simpler approach
         // that doesn't require FFmpeg installation
@@ -243,8 +346,8 @@ export async function renderVideoFallback({
         }
         
         // Update progress after slideshow creation attempt
-        await updateJobProgress(jobId, 60);
-        onProgress(60);
+        await updateJobProgress(jobId, 70);
+        onProgress(70);
       }
       
       // After either method, verify the video file exists and has sufficient size
@@ -263,8 +366,8 @@ export async function renderVideoFallback({
         isAudioOnly = true;
       }
       
-      await updateJobProgress(jobId, 70);
-      onProgress(70);
+      await updateJobProgress(jobId, 80);
+      onProgress(80);
     } catch (videoError) {
       console.error('Error creating video:', videoError);
       console.log('Falling back to audio-only mode');
@@ -330,9 +433,19 @@ export async function renderVideoFallback({
 /**
  * Try to render the video using Remotion
  */
-async function tryRemotionRender(outputPath: string, script: string, audioPath: string): Promise<boolean> {
+async function tryRemotionRender(
+  outputPath: string, 
+  script: string, 
+  audioPath: string | undefined,
+  media?: FetchedMedia[][]
+): Promise<boolean> {
   try {
     console.log('Attempting to render video using Remotion...');
+    
+    // Helper function to safely get basename
+    const safeBasename = (filePath: string | undefined): string => {
+      return filePath ? path.basename(filePath) : 'unknown.mp3';
+    };
     
     // Import required modules dynamically
     let bundleImport;
@@ -374,10 +487,10 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
                 <Composition
                   id="VideoLecture"
                   component={VideoLecture}
-                  width={1280}
-                  height={720}
-                  fps={30}
-                  durationInFrames={300}
+                  width={1920}
+                  height={1080}
+                  fps={60}
+                  durationInFrames={600}
                   defaultProps={{
                     script: "Default script content",
                     audioUrl: ""
@@ -400,17 +513,53 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
       }
     }
     
-    // Copy the audio file to the temp directory
-    const tmpAudioPath = path.join(tmpDir, `audio-${path.basename(audioPath)}`);
-    fs.copyFileSync(audioPath, tmpAudioPath);
+    // Check for a custom intro video in the public folder
+    let introVideoDataUrl = "";
+    const publicIntroPath = path.join(process.cwd(), 'public', 'intro.mp4');
+    const hasCustomIntro = fs.existsSync(publicIntroPath);
     
-    // Bundle the Remotion project
+    if (hasCustomIntro) {
+      console.log(`Found custom intro video at ${publicIntroPath}`);
+      try {
+        // Convert intro video to base64 data URL
+        const videoBuffer = fs.readFileSync(publicIntroPath);
+        const videoBase64 = videoBuffer.toString('base64');
+        introVideoDataUrl = `data:video/mp4;base64,${videoBase64}`;
+        console.log('Converted intro video to base64 data URL');
+      } catch (videoError) {
+        console.error('Error converting intro video to base64:', videoError);
+        // Continue without intro video if there's an error
+        introVideoDataUrl = "";
+      }
+    } else {
+      console.log(`No custom intro video found at ${publicIntroPath}, using default intro`);
+    }
+    
+    // Copy the audio file to the temp directory if it exists
+    let audioDataUrl = "";
+    if (audioPath && typeof audioPath === 'string') {
+      try {
+        if (fs.existsSync(audioPath)) {
+          // Read the audio file directly
+          const audioBuffer = fs.readFileSync(audioPath);
+          audioDataUrl = `data:audio/mp3;base64,${audioBuffer.toString('base64')}`;
+          console.log('Converted audio to base64 data URL');
+        } else {
+          console.warn(`Audio file not found at ${audioPath}, continuing without audio`);
+        }
+      } catch (audioError) {
+        console.error('Error processing audio file:', audioError);
+      }
+    } else {
+      console.warn('No audio path provided, continuing without audio');
+    }
+    
+    // Bundle the Remotion project with extra options
     console.log(`Bundling Remotion project from: ${entryPoint}`);
-    const bundleLocation = await bundle({
+    const bundleOptions = {
       entryPoint,
-      // Add ignoreRegisterRootWarning to avoid errors if the file isn't set up correctly
-      ignoreRegisterRootWarning: true,
-      webpackOverride: (config) => {
+      // Use a type assertion to handle the TypeScript error
+      webpackOverride: (config: any) => {
         return {
           ...config,
           resolve: {
@@ -424,22 +573,35 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
           },
         };
       },
-    });
+    };
+    
+    // Add ignoreRegisterRootWarning property using type assertion
+    const bundleOptionsWithIgnore = {
+      ...bundleOptions,
+      ignoreRegisterRootWarning: true,
+    } as any;
+    
+    const bundleLocation = await bundle(bundleOptionsWithIgnore);
     
     // Parse script into paragraphs to calculate duration
     const paragraphs = script.split('\n\n').filter(p => p.trim().length > 0);
     const numSlides = Math.max(1, paragraphs.length);
     
     // Use our constants from the VideoLecture component
-    const logoFrames = 90; // 3 seconds
-    const titleFrames = 120; // 4 seconds
-    const slideFrames = numSlides * 300; // 10 seconds per slide
-    const endLogoFrames = 60; // 2 seconds
-    const totalFrames = logoFrames + titleFrames + slideFrames + endLogoFrames;
+    // Note: These values reflect 60fps
+    const logoFrames = 180; // 3 seconds at 60fps
+    const customIntroFrames = 780; // 13 seconds at 60fps (updated to match your intro)
+    const titleFrames = 240; // 4 seconds at 60fps
+    const slideFrames = numSlides * 600; // 10 seconds per slide at 60fps
+    const endLogoFrames = 180; // 3 seconds at 60fps
     
-    // Ensure reasonable duration (between 10s and 3min)
-    const fps = 30;
-    const durationInFrames = Math.max(300, Math.min(5400, totalFrames));
+    // Calculate total frames based on intro type
+    const introFrames = hasCustomIntro ? customIntroFrames : logoFrames;
+    const totalFrames = introFrames + titleFrames + slideFrames + endLogoFrames;
+    
+    // Ensure reasonable duration (between 10s and 5min)
+    const fps = 60;
+    const durationInFrames = Math.max(600, Math.min(18000, totalFrames));
     
     console.log(`Rendering video with ${durationInFrames} frames at ${fps} fps for ${numSlides} slides...`);
     
@@ -449,7 +611,9 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
       id: 'VideoLecture',
       inputProps: {
         script,
-        audioUrl: tmpAudioPath,
+        audioUrl: audioDataUrl, // Use the data URL instead of file path
+        media,
+        customIntroPath: introVideoDataUrl // Pass the intro video as data URL instead of file path
       },
     });
     
@@ -459,18 +623,30 @@ async function tryRemotionRender(outputPath: string, script: string, audioPath: 
       fs.mkdirSync(outputDir, { recursive: true });
     }
     
-    // Render the video
-    console.log(`Rendering video to ${outputPath}...`);
-    await renderMedia({
-      composition,
+    // Render the video with additional properties
+    console.log(`Rendering video to ${outputPath} at ${fps}fps (1920x1080)...`);
+    
+    // Create render options with proper type assertions for durationInFrames and fps
+    const renderOptions = {
+      composition: {
+        ...composition,
+        width: 1920,
+        height: 1080,
+        fps: 60,
+        durationInFrames
+      },
       serveUrl: bundleLocation,
       codec: 'h264',
       outputLocation: outputPath,
       imageFormat: 'jpeg',
-      durationInFrames,
-      fps,
       pixelFormat: 'yuv420p',
-    });
+      // Enhanced video quality settings - use only CRF, not both CRF and videoBitrate
+      crf: 18, // Lower CRF for better quality (18-23 is considered visually lossless)
+      // videoBitrate: '10M', // Removed to avoid conflict with CRF
+      audioBitrate: '320k', // Higher audio bitrate
+    } as any; // Use type assertion to avoid TypeScript errors
+    
+    await renderMedia(renderOptions);
     
     console.log('Remotion video rendering completed successfully');
     return true;
@@ -497,11 +673,22 @@ async function createSimpleSlideshowFromScript(outputPath: string, script: strin
       
       // Use the -frames:v 1 and -update flags to create a single image
       // Also make sure we're using the correct font path from environment variable
-      const fontPath = process.env.FONT_PATH || process.env.FFMPEG_FONT_PATH || '/usr/share/fonts/dejavu/DejaVuSans.ttf';
+      const fontPath = process.env.FFMPEG_FONT_PATH || process.env.FONT_PATH || (process.platform === 'win32' 
+        ? 'C:/Windows/Fonts/arial.ttf' 
+        : '/usr/share/fonts/dejavu/DejaVuSans.ttf');
       console.log(`Using font path: ${fontPath}`);
       
       // Generate a blue background with text using FFmpeg with the correct arguments
-      const createImageCmd = `${ffmpegPath} -f lavfi -i color=c=blue:s=1280x720:d=1 -vf "drawtext=fontfile=${fontPath}:text='${script.substring(0, 100)}...':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=(h-text_h)/2" -frames:v 1 -update 1 ${tempImgPath}`;
+      // Simplify the text and properly escape special characters
+      const safeText = "LockIn AI Video"; // Use a simple, safe text to avoid escaping issues
+      
+      // Windows has issues with quotes in commands, so use a simpler command format
+      // The key is to ensure the output file is correctly specified
+      const escapedTempImgPath = process.platform === 'win32' 
+        ? tempImgPath.replace(/\\/g, '/') 
+        : tempImgPath;
+      
+      const createImageCmd = `${ffmpegPath} -f lavfi -i color=c=blue:s=1920x1080:d=1 -vf "drawtext=fontfile=${fontPath}:text=${safeText}:fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2" -y "${escapedTempImgPath}"`;
       
       console.log('Creating background image with text...');
       console.log(`Executing command: ${createImageCmd}`);
@@ -517,7 +704,14 @@ async function createSimpleSlideshowFromScript(outputPath: string, script: strin
       
       // Combine image and audio to create video
       console.log('Combining image and audio to create video...');
-      const createVideoCmd = `${ffmpegPath} -loop 1 -i ${tempImgPath} -i ${audioPath} -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest ${outputPath}`;
+      const escapedOutputPath = process.platform === 'win32' 
+        ? outputPath.replace(/\\/g, '/') 
+        : outputPath;
+      const escapedAudioPath = process.platform === 'win32' 
+        ? audioPath.replace(/\\/g, '/') 
+        : audioPath;
+      
+      const createVideoCmd = `${ffmpegPath} -loop 1 -i "${escapedTempImgPath}" -i "${escapedAudioPath}" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest -y "${escapedOutputPath}"`;
       console.log(`Executing command: ${createVideoCmd}`);
       await execAsync(createVideoCmd);
       
@@ -547,47 +741,42 @@ async function uploadToSupabase(
   isAudioOnly: boolean,
   bucketName: string
 ): Promise<string> {
-  console.log(`Uploading to Supabase: ${filePath} to bucket ${bucketName}`);
-  
   try {
+    console.log(`Uploading to Supabase: ${filePath} to bucket ${bucketName}`);
+    
     // Read the file data
-    const data = fs.readFileSync(filePath);
-    const uniqueFileName = `${jobId}${fileExtension}`;
+    const fileData = fs.readFileSync(filePath);
+    
+    // Ensure proper file extension with dot
+    const fileName = `${jobId}.${fileExtension.replace(/^\./, '')}`;
     
     // Upload to the specified bucket
-    const { data: fileData, error } = await storage
+    const { data, error } = await storage
       .from(bucketName)
-      .upload(uniqueFileName, data, {
+      .upload(fileName, fileData, {
         contentType,
-        cacheControl: 'public, max-age=31536000', // Cache for 1 year
+        cacheControl: '3600',
         upsert: true
       });
     
     if (error) {
-      console.error(`Error uploading to bucket '${bucketName}':`, error);
-      throw new Error(`Supabase storage upload error: ${error.message}`);
+      console.error(`Error uploading to Supabase: ${error.message}`);
+      throw new Error(`Failed to upload to Supabase: ${error.message}`);
     }
     
-    if (!fileData?.path) {
-      throw new Error(`No file path returned from Supabase upload to bucket '${bucketName}'`);
-    }
+    console.log(`Successfully uploaded to Supabase at: ${fileName}`);
     
-    console.log(`Successfully uploaded to Supabase at: ${fileData.path}`);
-    
-    // Create a public URL for the file
-    const { data: publicURL } = storage
+    // Generate a URL for the file
+    const { data: { publicUrl } } = storage
       .from(bucketName)
-      .getPublicUrl(uniqueFileName);
+      .getPublicUrl(fileName);
     
-    if (!publicURL?.publicUrl) {
-      throw new Error(`Couldn't get public URL for file in '${bucketName}'`);
-    }
+    console.log(`Public URL generated: ${publicUrl}`);
     
-    console.log(`Public URL generated: ${publicURL.publicUrl}`);
-    return publicURL.publicUrl;
-  } catch (err) {
-    console.error('Error in uploadToSupabase:', err);
-    throw err;
+    return publicUrl;
+  } catch (error) {
+    console.error('Error uploading to Supabase:', error);
+    throw new Error(`Failed to upload to Supabase: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

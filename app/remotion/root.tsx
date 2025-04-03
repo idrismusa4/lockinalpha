@@ -39,9 +39,9 @@ const RemotionRoot: React.FC = () => {
         id="VideoLecture"
         component={VideoLecture}
         durationInFrames={calculateDuration("Placeholder script")}
-        fps={30}
-        width={1280}
-        height={720}
+        fps={60}
+        width={1920}
+        height={1080}
         defaultProps={{
           script: "This is a placeholder script. Replace with actual content.",
           audioUrl: "",

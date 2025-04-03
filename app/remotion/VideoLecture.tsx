@@ -2,25 +2,64 @@ import React, { useMemo } from 'react';
 import { 
   AbsoluteFill, 
   Sequence, 
-  useCurrentFrame, 
-  useVideoConfig, 
-  spring, 
-  Audio, 
-  interpolate,
-  Easing
+  useVideoConfig,
 } from 'remotion';
+
+// Import these at runtime to avoid TypeScript errors
+// while still making them available for the component
+const remotion = require('remotion');
+const Audio = remotion.Audio;
+const useCurrentFrame = remotion.useCurrentFrame;
+const spring = remotion.spring;
+const interpolate = remotion.interpolate;
+const Easing = remotion.Easing;
+const Img = remotion.Img;
+const Video = remotion.Video;
+
 import { VideoLectureProps } from './index';
-import { parseMarkdown } from './utils/parser';
-import { BACKGROUND_COLOR, COLORS, LOGO_DURATION, TITLE_DURATION, SLIDE_DURATION, END_LOGO_DURATION, STICKMAN, HEADING_FONT, BODY_FONT } from './constants';
+import { parseMarkdown, shouldVisualizeData, suggestStickmanPose, suggestGraphType } from './utils/parser';
+import { BACKGROUND_COLOR, COLORS, HEADING_FONT, BODY_FONT, STICKMAN } from './constants';
+import { FetchedMedia } from '../services/mediaFetchService';
+
+// Define a custom interface for stickman poses to avoid TypeScript errors
+interface StickmanPose {
+  rightArmRotation: number;
+  leftArmRotation: number;
+  rightLegRotation: number;
+  leftLegRotation: number;
+  headTilt: number;
+  translateY?: number;
+}
 
 // Utility function to generate random within range
 const random = (min: number, max: number) => Math.random() * (max - min) + min;
 
+// Animation timing constants - DOUBLED for 60fps
+const LOGO_DURATION = 180; // 3 seconds @ 60fps
+const TITLE_DURATION = 240; // 4 seconds @ 60fps
+const SLIDE_DURATION = 600; // 10 seconds per slide @ 60fps
+const END_LOGO_DURATION = 180; // 3 seconds @ 60fps
+
+// Exact time to start audio (4 seconds = 240 frames @ 60fps)
+const AUDIO_START_DELAY = 240; // 4 seconds @ 60fps
+
+// New constants for custom intro - properly timed for 60fps
+const CUSTOM_INTRO_DURATION = 780; // 13 seconds @ 60fps (adjust based on your actual intro video length)
+const USE_CUSTOM_INTRO = true; // Flag to toggle between default and custom intro
+
 // Animation timing constants
-const LOGO_DURATION = 90; // frames
-const TITLE_DURATION = 120; // frames
-const SLIDE_DURATION = 300; // frames for each content slide
-const END_LOGO_DURATION = 90; // frames
+const FADE_DURATION = 30; // 0.5 seconds @ 60fps
+const STAGGER_DELAY = 5; // 5 frames between items
+
+// Export these constants for use in other files
+export {
+  LOGO_DURATION,
+  TITLE_DURATION,
+  SLIDE_DURATION,
+  END_LOGO_DURATION,
+  AUDIO_START_DELAY,
+  CUSTOM_INTRO_DURATION
+};
 
 // Stickman animations component
 const Stickman: React.FC<{pose?: string; style?: React.CSSProperties}> = ({ 
@@ -39,7 +78,7 @@ const Stickman: React.FC<{pose?: string; style?: React.CSSProperties}> = ({
   const legLength = STICKMAN.legLength;
   
   // Different poses based on context
-  const poses: Record<string, React.CSSProperties> = {
+  const poses: Record<string, StickmanPose> = {
     thinking: {
       rightArmRotation: -45 + Math.sin(frame / 15) * 5,
       leftArmRotation: 20,
@@ -87,16 +126,19 @@ const Stickman: React.FC<{pose?: string; style?: React.CSSProperties}> = ({
   
   const currentPose = poses[pose] || poses.thinking;
   
-  return (
-    <div
-      style={{
+  // Create a new CSS properties object without the custom properties
+  const containerStyle: React.CSSProperties = {
         position: 'relative',
         width: headRadius * 2 + 100,
         height: headRadius * 2 + bodyLength + legLength + 20,
-        transform: `translateY(${currentPose.translateY || 0}px)`,
+    transform: currentPose.translateY !== undefined ? 
+      `translateY(${currentPose.translateY}px)` : undefined,
         ...style,
-      }}
-    >
+  };
+
+  // Use the pose properties for the animations rather than as direct CSS props
+  return (
+    <div style={containerStyle}>
       {/* Head */}
       <div
         style={{
@@ -341,48 +383,433 @@ const GraphVisualization: React.FC<{ type?: string; style?: React.CSSProperties 
   );
 };
 
-// Component to display text with animation
+// A component to display a GIF with proper sizing and positioning
+interface MediaBackgroundProps {
+  media?: FetchedMedia;
+  opacity?: number;
+}
+
+// This component is deprecated in favor of MediaSlide
+// It's kept for backward compatibility but not used in new slides
+const MediaBackground: React.FC<MediaBackgroundProps> = ({ 
+  media, 
+  opacity = 0.5 
+}) => {
+  console.log('WARNING: MediaBackground is deprecated, use MediaSlide instead');
+  const { width, height } = useVideoConfig();
+  const frame = useCurrentFrame();
+  
+  // Debug media object
+  console.log('Media object in MediaBackground:', media);
+  
+  if (!media || !media.url) {
+    return null;
+  }
+  
+  // Calculate scale to fit the media within the frame while maintaining aspect ratio
+  const mediaWidth = media.width || 500;
+  const mediaHeight = media.height || 300;
+  const mediaAspect = mediaWidth / mediaHeight;
+  const frameAspect = width / height;
+  
+  let scale = 1;
+  if (mediaAspect > frameAspect) {
+    // Media is wider than frame - scale to height
+    scale = height / mediaHeight;
+  } else {
+    // Media is taller than frame - scale to width
+    scale = width / mediaWidth;
+  }
+  
+  // Scale up slightly to avoid borders
+  const finalScale = scale * 1.05;
+  
+  // Calculate dimensions with scale applied
+  const scaledWidth = mediaWidth * finalScale;
+  const scaledHeight = mediaHeight * finalScale;
+  
+  // Animate the image subtly
+  const translateX = Math.sin(frame / 50) * 10;
+  const translateY = Math.cos(frame / 60) * 10;
+  
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        overflow: 'hidden',
+        opacity,
+        zIndex: 0,
+      }}
+    >
+      {/* Use standard img tag with fallback if Img doesn't work */}
+      {Img ? (
+      <Img
+        src={media.url}
+        style={{
+          width: scaledWidth,
+          height: scaledHeight,
+          objectFit: 'cover',
+            transform: `translate(${translateX}px, ${translateY}px)`,
+          }}
+        />
+      ) : (
+        <img
+          src={media.url}
+          style={{
+            width: scaledWidth,
+            height: scaledHeight,
+            objectFit: 'cover',
+            transform: `translate(${translateX}px, ${translateY}px)`,
+          }}
+        />
+      )}
+      
+      {/* Overlay to control the brightness and help text readability */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          backgroundColor: BACKGROUND_COLOR,
+          opacity: 0.7,
+          zIndex: 1,
+        }}
+      />
+    </div>
+  );
+};
+
+// A component to display media with proper sizing and transition effects
+interface MediaSlideProps {
+  media?: FetchedMedia[];  // Changed from single media item to array
+  text: string;
+  index: number;
+  includeGraph?: boolean;
+}
+
+const MediaSlide: React.FC<MediaSlideProps> = ({ 
+  media, 
+  text,
+  index,
+  includeGraph = false,
+}) => {
+  const frame = useCurrentFrame();
+  const { width, height, fps } = useVideoConfig();
+  
+  // Animation for the slide entry
+  const slideIn = spring({
+    frame,
+    from: 0,
+    to: 1,
+    fps,
+    config: {
+      damping: 15,
+      stiffness: 80,
+    },
+  });
+  
+  // Animation for the text - word-by-word appearance
+  const textAnimationProgress = Math.min(1, frame / (text.length * 0.3)); 
+  
+  // Check if we have valid media
+  const hasMedia = media && media.length > 0;
+  
+  // Calculate grid layout based on number of media items
+  const gridColumns = hasMedia ? (
+    media.length === 1 ? 1 : 
+    media.length === 2 ? 2 : 
+    media.length === 3 ? 3 : 
+    media.length === 4 ? 2 : 
+    3  // Default to 3 columns for 5+ items
+  ) : 1;
+  
+  const gridRows = hasMedia ? (
+    media.length === 1 ? 1 : 
+    media.length === 2 ? 1 : 
+    media.length === 3 ? 1 : 
+    media.length === 4 ? 2 : 
+    Math.ceil(media.length / 3)  // Calculate rows needed for grid
+  ) : 1;
+  
+  // Determine max size for media based on layout
+  const MAX_MEDIA_WIDTH = width * 0.8 / gridColumns;
+  const MAX_MEDIA_HEIGHT = height * 0.7 / gridRows;
+  
+  // Text animation similar to standard text slide
+  const animatedText = () => {
+    // Split the text into words and preserve punctuation
+    const words = text.split(/(\s+|[,.!?;:()])/g).filter(word => word !== '');
+    
+    return words.map((word, i) => {
+      // Calculate the character count up to the current word
+      const charCount = words.slice(0, i).join('').length;
+      
+      // Determine when this word should appear
+      const wordProgress = Math.max(0, Math.min(1, 
+        (textAnimationProgress * text.length - charCount) * 0.5));
+      
+      return (
+        <span
+          key={i}
+          style={{
+            opacity: wordProgress,
+            transform: `translateY(${(1 - wordProgress) * 20}px)`,
+            display: 'inline-block',
+            whiteSpace: 'pre',  // Preserve spacing
+            transition: 'opacity 0.2s, transform 0.2s',
+          }}
+        >
+          {word}
+        </span>
+      );
+    });
+  };
+  
+  // Render a single media item with animations
+  const renderMediaItem = (item: FetchedMedia, index: number) => {
+    // Stagger the animations slightly for each item
+    const staggerDelay = index * 5;
+    
+    // Calculate dimensions for this specific media
+    const mediaWidth = item.width || MAX_MEDIA_WIDTH;
+    const mediaHeight = item.height || MAX_MEDIA_HEIGHT;
+    const isPortrait = mediaHeight > mediaWidth;
+    
+    // Different sizing strategy based on orientation
+    const scaleFactor = isPortrait ? 
+      Math.min(MAX_MEDIA_HEIGHT / mediaHeight, MAX_MEDIA_WIDTH / mediaWidth) : 
+      Math.min(MAX_MEDIA_WIDTH / mediaWidth, MAX_MEDIA_HEIGHT / mediaHeight);
+    
+    // Apply a smaller scale to avoid overwhelming the viewer
+    // For multiple media items, make them smaller
+    const adjustedScaleFactor = media && media.length > 1 ? 
+      scaleFactor * 0.9 : 
+      scaleFactor * 0.8;
+    
+    // Animation for this specific media element
+    const thisMediaAnimation = {
+      opacity: spring({
+        frame: frame - 10 - staggerDelay,
+        from: 0,
+        to: 1,
+        fps,
+        config: {
+          damping: 15,
+          stiffness: 80,
+        },
+      }),
+      scale: spring({
+        frame: frame - 5 - staggerDelay,
+        from: 1.05,
+        to: 1,
+        fps,
+        config: {
+          damping: 15,
+          stiffness: 80,
+        },
+      }),
+      translateX: Math.sin((frame + index * 10) / 100) * 5,
+    };
+    
+    return (
+      <div
+        key={`media-${index}`}
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          margin: '10px',
+          transform: `scale(${thisMediaAnimation.scale})`,
+          opacity: thisMediaAnimation.opacity,
+          transition: 'all 0.3s ease-in-out',
+        }}
+      >
+        {Img ? (
+          <Img
+            src={item.url}
+            style={{
+              width: 'auto',
+              height: 'auto',
+              maxWidth: mediaWidth * adjustedScaleFactor,
+              maxHeight: mediaHeight * adjustedScaleFactor,
+              objectFit: 'contain',
+              transform: `translateX(${thisMediaAnimation.translateX}px)`,
+              borderRadius: 8,
+              boxShadow: '0 8px 20px rgba(0, 0, 0, 0.3)',
+            }}
+          />
+        ) : (
+          <img
+            src={item.url}
+            style={{
+              width: 'auto',
+              height: 'auto',
+              maxWidth: mediaWidth * adjustedScaleFactor,
+              maxHeight: mediaHeight * adjustedScaleFactor,
+              objectFit: 'contain',
+              transform: `translateX(${thisMediaAnimation.translateX}px)`,
+              borderRadius: 8,
+              boxShadow: '0 8px 20px rgba(0, 0, 0, 0.3)',
+            }}
+          />
+        )}
+      </div>
+    );
+  };
+  
+  return (
+    <AbsoluteFill
+      style={{
+        backgroundColor: BACKGROUND_COLOR,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
+        background: COLORS.backgroundGradient,
+        opacity: slideIn,
+      }}
+    >
+      {/* Media grid container - takes up most of the screen */}
+      {hasMedia && (
+        <div
+          style={{
+            position: 'relative',
+            width: '100%',
+            height: '75%',
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'center',
+            alignItems: 'center',
+            marginBottom: 20,
+          }}
+        >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${gridColumns}, 1fr)`,
+              gridTemplateRows: `repeat(${gridRows}, 1fr)`,
+              gap: '15px',
+              width: '90%',
+              height: '90%',
+              alignItems: 'center',
+              justifyItems: 'center',
+            }}
+          >
+            {media && media.map((item, idx) => item && item.url ? renderMediaItem(item, idx) : null)}
+          </div>
+        </div>
+      )}
+      
+      {/* Text overlay at the bottom */}
+      <div
+        style={{
+          position: 'relative',
+          width: '90%',
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          padding: '20px 30px',
+          borderRadius: 15,
+          backdropFilter: 'blur(10px)',
+          marginTop: hasMedia ? 0 : 'auto',
+          marginBottom: hasMedia ? 20 : 'auto',
+        }}
+      >
+        <h2
+          style={{
+            fontSize: 32,
+            fontWeight: 'bold',
+            color: COLORS.text,
+            marginBottom: includeGraph ? 20 : 0,
+            textShadow: '2px 2px 4px rgba(0, 0, 0, 0.5)',
+            lineHeight: 1.4,
+            textAlign: 'center',
+          }}
+        >
+          {animatedText()}
+        </h2>
+        
+        {includeGraph && (
+          <GraphVisualization 
+            type={suggestGraphType(text)} 
+            style={{ 
+              marginTop: 20,
+              marginBottom: 10,
+            }} 
+          />
+        )}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// Component to display text with animation - used when no media is available
 const TextSlide: React.FC<{ 
   text: string; 
   index: number; 
   includeAnimation?: boolean;
   includeGraph?: boolean;
+  media?: FetchedMedia[];  // Changed from single media to array
 }> = ({ 
   text, 
   index,
   includeAnimation = true,
-  includeGraph = false
+  includeGraph = false,
+  media
 }) => {
+  // If we have media available, use the media-focused slide instead
+  if (media && media.length > 0 && media[0] && media[0].url) {
+    return <MediaSlide media={media} text={text} index={index} includeGraph={includeGraph} />;
+  }
+  
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   
   // Determine if this slide should show a stickman based on the text content
   const shouldShowStickman = useMemo(() => {
-    return includeAnimation && (text.toLowerCase().includes('example') || 
+    return includeAnimation && (
+      text.toLowerCase().includes('example') || 
            text.toLowerCase().includes('consider') ||
            text.toLowerCase().includes('imagine') ||
-           index % 2 === 0); // Show on every other slide
+      text.toLowerCase().includes('show') ||
+      text.toLowerCase().includes('present') ||
+      text.toLowerCase().includes('explain') ||
+      text.toLowerCase().includes('discuss') ||
+      index % 3 === 0 // Show on every third slide for variety
+    );
   }, [text, index, includeAnimation]);
   
   // Determine stickman pose based on text content
   const stickmanPose = useMemo(() => {
-    if (text.toLowerCase().includes('point') || text.toLowerCase().includes('highlight')) {
+    const textLower = text.toLowerCase();
+    
+    if (textLower.includes('point') || textLower.includes('highlight') || textLower.includes('show')) {
       return 'pointing';
     }
-    if (text.toLowerCase().includes('walk') || text.toLowerCase().includes('move')) {
+    if (textLower.includes('walk') || textLower.includes('move') || textLower.includes('step')) {
       return 'walking';
     }
-    if (text.toLowerCase().includes('jump') || text.toLowerCase().includes('increase')) {
+    if (textLower.includes('jump') || textLower.includes('increase') || textLower.includes('rise')) {
       return 'jumping';
     }
-    if (text.toLowerCase().includes('sit') || text.toLowerCase().includes('rest')) {
+    if (textLower.includes('sit') || textLower.includes('rest') || textLower.includes('relax')) {
       return 'sitting';
     }
-    if (text.toLowerCase().includes('explain') || text.toLowerCase().includes('breakdown')) {
+    if (textLower.includes('explain') || textLower.includes('breakdown') || textLower.includes('present')) {
       return 'explaining';
     }
-    return 'thinking';
-  }, [text]);
+    
+    // Default pose based on slide index for variety
+    const poses = ['thinking', 'explaining', 'pointing', 'walking', 'sitting'];
+    return poses[index % poses.length];
+  }, [text, index]);
   
   // Determine if we should show a graph visualization
   const shouldShowGraph = useMemo(() => {
@@ -423,31 +850,49 @@ const TextSlide: React.FC<{
   // Animation for the text - letter-by-letter appearance
   const textAnimationProgress = Math.min(1, frame / (text.length * 0.5));
   
-  // Split text for animation - show characters one by one
-  const animatedText = text
-    .split('')
-    .map((char, i) => {
-      const charProgress = Math.max(0, Math.min(1, (textAnimationProgress * text.length - i) * 0.3));
+  // Split text for animation - improve by showing words instead of individual characters
+  const animatedText = () => {
+    // If we're not doing character animation, just show the whole text
+    if (!includeAnimation) {
+      return <span>{text}</span>;
+    }
+    
+    // Split the text into words and preserve punctuation
+    const words = text.split(/(\s+|[,.!?;:()])/g).filter(word => word !== '');
+    
+    return words.map((word, i) => {
+      // Calculate the character count up to the current word
+      const charCount = words.slice(0, i).join('').length;
       
+      // Determine when this word should appear
+      const wordProgress = Math.max(0, Math.min(1, 
+        (textAnimationProgress * text.length - charCount) * 0.5));
+      
+      // Use different timing for each word to mimic speech rhythm
       return (
         <span
           key={i}
           style={{
-            opacity: charProgress,
-            transform: `translateY(${(1 - charProgress) * 20}px)`,
+            opacity: wordProgress,
+            transform: `translateY(${(1 - wordProgress) * 20}px)`,
             display: 'inline-block',
+            whiteSpace: 'pre',  // Preserve spacing
+            marginRight: word.trim() === '' ? 0 : 0,  // Only add margin for non-space words
+            transition: 'opacity 0.2s, transform 0.2s',
           }}
         >
-          {char}
+          {word}
         </span>
       );
     });
+  };
   
   return (
     <AbsoluteFill
       style={{
         backgroundColor: BACKGROUND_COLOR,
         display: 'flex',
+        flexDirection: shouldShowStickman ? 'row' : 'column',
         alignItems: 'center',
         justifyContent: 'center',
         padding: 40,
@@ -457,6 +902,8 @@ const TextSlide: React.FC<{
         fontFamily: BODY_FONT,
       }}
     >
+      {/* Remove MediaBackground since we're using MediaSlide for media content */}
+      
       <div 
         style={{
           display: 'flex',
@@ -493,9 +940,10 @@ const TextSlide: React.FC<{
               color: COLORS.text,
               marginBottom: 20,
               textShadow: '2px 2px 4px rgba(0, 0, 0, 0.5)',
+              lineHeight: 1.4,
             }}
           >
-            {animatedText}
+            {animatedText()}
           </h2>
           
           {shouldShowGraph && (
@@ -759,62 +1207,164 @@ const LogoOutro: React.FC = () => {
   );
 };
 
-// Main video component
-export const VideoLecture: React.FC<VideoLectureProps> = ({ script, audioUrl }) => {
+// Custom intro component that plays a local video
+const CustomIntro: React.FC<{ videoPath?: string }> = ({ videoPath = "/intro.mp4" }) => {
+  const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  
-  // Parse the Markdown script
-  const { title, paragraphs } = useMemo(() => {
-    return parseMarkdown(script);
-  }, [script]);
-  
-  // Calculate total frames needed
-  const logoFrames = LOGO_DURATION;
-  const titleFrames = TITLE_DURATION;
-  const slideFrames = paragraphs.length * SLIDE_DURATION;
-  const endLogoFrames = END_LOGO_DURATION;
-  const totalFrames = logoFrames + titleFrames + slideFrames + endLogoFrames;
+  const opacity = Math.min(1, frame / FADE_DURATION); // Fade in over half a second @ 60fps
+  const isDataUrl = videoPath.startsWith('data:');
   
   return (
-    <AbsoluteFill>
-      {/* Background audio for the entire video */}
-      {audioUrl && (
-        <Audio src={audioUrl} />
-      )}
-      
-      {/* Start with logo animation */}
-      <Sequence durationInFrames={LOGO_DURATION}>
-        <LogoIntro />
-      </Sequence>
-      
-      {/* Title slide */}
-      <Sequence from={LOGO_DURATION} durationInFrames={TITLE_DURATION}>
-        <TitleSlide title={title} />
-      </Sequence>
-      
-      {/* Content slides */}
-      {paragraphs.map((paragraph, i) => (
-        <Sequence
-          key={i}
-          from={LOGO_DURATION + TITLE_DURATION + i * SLIDE_DURATION}
-          durationInFrames={SLIDE_DURATION}
-        >
-          <TextSlide 
-            text={paragraph} 
-            index={i} 
-            includeAnimation={true}
-            includeGraph={true}
+    <AbsoluteFill style={{ backgroundColor: COLORS.black, justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        {isDataUrl ? (
+          // For data URLs, use Video component with transparent background
+          <Video 
+            src={videoPath} 
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              opacity,
+            }}
           />
-        </Sequence>
-      ))}
+        ) : (
+          // For regular file paths
+          <Video 
+            src={videoPath} 
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              opacity,
+            }}
+          />
+        )}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// Main video component
+export const VideoLecture: React.FC<VideoLectureProps> = ({ 
+  script, 
+  audioUrl,
+  media,
+  customIntroPath
+}) => {
+  const frame = useCurrentFrame();
+  const { fps, durationInFrames, width, height } = useVideoConfig();
+  
+  console.log('Video config:', { fps, durationInFrames, width, height });
+  
+  // Debug logs to track props
+  console.log('VideoLecture props:', { 
+    scriptLength: script?.length,
+    audioUrl: audioUrl?.substring(0, 50) + '...',
+    hasMedia: !!media,
+    mediaLength: media?.length,
+    customIntroPath: customIntroPath?.substring(0, 50) + '...'
+  });
+  
+  // Parse script to extract title and paragraphs
+  const lines = script.split('\n');
+  const title = lines[0].replace(/^#\s+/, '');
+  const paragraphs = lines.slice(1).join('\n').split('\n\n').filter(p => p.trim().length > 0);
+  
+  // Debug media arrays
+  if (media) {
+    console.log(`Media array has ${media.length} items`);
+    if (media.length > 0 && media[0]) {
+      console.log(`First media item:`, media[0][0]?.url?.substring(0, 50) + '...');
+    }
+  }
+  
+  // Determine if we're using a custom intro
+  const hasCustomIntro = !!customIntroPath;
+  console.log('Using custom intro:', hasCustomIntro, customIntroPath?.substring(0, 50));
+  
+  // Calculate when each slide starts (in frames)
+  const introDuration = hasCustomIntro ? CUSTOM_INTRO_DURATION : LOGO_DURATION;
+  console.log('Intro duration:', introDuration / fps, 'seconds');
+  
+  // Calculate when each section starts
+  const titleStart = introDuration;
+  const contentStart = titleStart + TITLE_DURATION;
+  const contentDuration = paragraphs.length * SLIDE_DURATION;
+  const outroStart = contentStart + contentDuration;
+  
+  // Calculate audio start time
+  // If we have a custom intro, we should wait until it finishes before starting the main audio
+  const audioStartFrame = hasCustomIntro ? introDuration : AUDIO_START_DELAY;
+  console.log('Audio starts at frame:', audioStartFrame, '(', audioStartFrame / fps, 'seconds)');
+  
+  // Determine what to render based on current frame
+  const renderCurrentContent = () => {
+    // Intro sequence (logo)
+    if (frame < introDuration) {
+      if (hasCustomIntro && customIntroPath) {
+        return <CustomIntro videoPath={customIntroPath} />;
+      } else {
+        return <LogoIntro />;
+      }
+    }
+    
+    // Title slide
+    if (frame < contentStart) {
+      return <TitleSlide title={title} />;
+    }
+    
+    // Content slides
+    if (frame < outroStart) {
+      const slideIndex = Math.floor((frame - contentStart) / SLIDE_DURATION);
+      const text = paragraphs[Math.min(slideIndex, paragraphs.length - 1)];
       
-      {/* End with logo */}
-      <Sequence 
-        from={LOGO_DURATION + TITLE_DURATION + slideFrames} 
-        durationInFrames={END_LOGO_DURATION}
-      >
-        <LogoOutro />
-      </Sequence>
+      // Check if we have media for this paragraph
+      const slideMedia = media && media[slideIndex] ? media[slideIndex] : undefined;
+      const hasMediaForSlide = slideMedia && slideMedia.length > 0;
+      
+      // For every 3rd slide, show a graph
+      const includeGraph = slideIndex % 3 === 1;
+      
+      // Use Media slide if we have media, otherwise use text slide
+      if (hasMediaForSlide) {
+        return (
+          <MediaSlide 
+            text={text} 
+            index={slideIndex} 
+            media={slideMedia}
+            includeGraph={includeGraph}
+          />
+        );
+      } else {
+        // Fallback to text slide if no media
+        return (
+          <TextSlide 
+            text={text} 
+            index={slideIndex} 
+            includeGraph={includeGraph}
+          />
+        );
+      }
+    }
+    
+    // Outro sequence (logo)
+    return <LogoOutro />;
+  };
+  
+  return (
+    <AbsoluteFill style={{ backgroundColor: COLORS.background }}>
+      {/* Render current content based on frame */}
+      {renderCurrentContent()}
+      
+      {/* Audio track starts after intro */}
+      {audioUrl && (
+        <Audio
+          src={audioUrl}
+          startFrom={audioStartFrame}
+          volume={1}
+        />
+      )}
     </AbsoluteFill>
   );
 }; 

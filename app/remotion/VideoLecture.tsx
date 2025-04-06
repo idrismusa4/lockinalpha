@@ -35,20 +35,20 @@ interface StickmanPose {
 const random = (min: number, max: number) => Math.random() * (max - min) + min;
 
 // Animation timing constants - DOUBLED for 60fps
-const LOGO_DURATION = 180; // 3 seconds @ 60fps
-const TITLE_DURATION = 240; // 4 seconds @ 60fps
-const SLIDE_DURATION = 600; // 10 seconds per slide @ 60fps
-const END_LOGO_DURATION = 180; // 3 seconds @ 60fps
+const LOGO_DURATION = 90; // 3 seconds @ 30fps
+const TITLE_DURATION = 120; // 4 seconds @ 30fps
+const SLIDE_DURATION = 300; // 10 seconds per slide @ 30fps
+const END_LOGO_DURATION = 90; // 3 seconds @ 30fps
 
 // Exact time to start audio (4 seconds = 240 frames @ 60fps)
-const AUDIO_START_DELAY = 240; // 4 seconds @ 60fps
+const AUDIO_START_DELAY = 120; // 4 seconds @ 30fps
 
 // New constants for custom intro - properly timed for 60fps
-const CUSTOM_INTRO_DURATION = 780; // 13 seconds @ 60fps (adjust based on your actual intro video length)
+const CUSTOM_INTRO_DURATION = 390; // 13 seconds @ 30fps (adjust based on your actual intro video length)
 const USE_CUSTOM_INTRO = true; // Flag to toggle between default and custom intro
 
 // Animation timing constants
-const FADE_DURATION = 30; // 0.5 seconds @ 60fps
+const FADE_DURATION = 15; // 0.5 seconds @ 60fps
 const STAGGER_DELAY = 5; // 5 frames between items
 
 // Export these constants for use in other files
@@ -1211,35 +1211,51 @@ const LogoOutro: React.FC = () => {
 const CustomIntro: React.FC<{ videoPath?: string }> = ({ videoPath = "/intro.mp4" }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const opacity = Math.min(1, frame / FADE_DURATION); // Fade in over half a second @ 60fps
+  const opacity = Math.min(1, frame / FADE_DURATION);
   const isDataUrl = videoPath.startsWith('data:');
+  
+  // Log frame information for debugging timing issues
+  if (frame % 30 === 0) { // Log once per second
+    console.log(`[CustomIntro] Second ${frame/fps}: Playing intro video`);
+  }
+  
+  // The total duration in our timeline (in frames)
+  const totalDurationFrames = CUSTOM_INTRO_DURATION;
+  
+  // Calculate playback rate to ensure video fits exactly in the allocated duration
+  // For a 13-second video at 34fps source played in a 30fps composition over 13 seconds:
+  // We want playbackRate = 1.0 to maintain the original timing
+  const playbackRate = 1.0;
   
   return (
     <AbsoluteFill style={{ backgroundColor: COLORS.black, justifyContent: 'center', alignItems: 'center' }}>
       <div style={{ width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-        {isDataUrl ? (
-          // For data URLs, use Video component with transparent background
-          <Video 
-            src={videoPath} 
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              opacity,
-            }}
-          />
-        ) : (
-          // For regular file paths
-          <Video 
-            src={videoPath} 
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              opacity,
-            }}
-          />
-        )}
+        <Video 
+          src={videoPath} 
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            opacity,
+          }}
+          volume={1}
+          muted={false}
+          playbackRate={playbackRate}
+        />
+      </div>
+      
+      {/* Debug info overlay */}
+      <div style={{
+        position: 'absolute',
+        top: 10,
+        left: 10,
+        color: 'rgba(255,255,255,0.5)',
+        fontSize: 12,
+        fontFamily: 'monospace',
+        padding: 5,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+      }}>
+        Intro: {Math.round(frame/fps)}s / {Math.round(totalDurationFrames/fps)}s
       </div>
     </AbsoluteFill>
   );
@@ -1252,119 +1268,138 @@ export const VideoLecture: React.FC<VideoLectureProps> = ({
   media,
   customIntroPath
 }) => {
+  // Parse the script to extract title and paragraphs
+  const { title, paragraphs } = parseMarkdown(script);
   const frame = useCurrentFrame();
-  const { fps, durationInFrames, width, height } = useVideoConfig();
+  const { fps } = useVideoConfig();
+
+  console.log(`[VideoLecture] Received script with title: ${title} and ${paragraphs.length} paragraphs`);
+  console.log(`[VideoLecture] Audio URL: ${audioUrl ? 'provided' : 'not provided'}`);
+  console.log(`[VideoLecture] Custom intro path: ${customIntroPath ? customIntroPath : 'not provided'}`);
+
+  // Filter out section breaks (paragraphs that only contain "--" characters)
+  const filteredParagraphs = paragraphs.filter(p => {
+    const trimmed = p.trim();
+    const isBreak = trimmed === '--' || trimmed === '---' || trimmed === '----';
+    if (isBreak) {
+      console.log(`[VideoLecture] Filtering out section break: "${p}"`);
+    }
+    return !isBreak;
+  });
+
+  console.log(`[VideoLecture] After filtering section breaks: ${filteredParagraphs.length} paragraphs remaining`);
   
-  console.log('Video config:', { fps, durationInFrames, width, height });
+  // Log all paragraphs for debugging
+  filteredParagraphs.forEach((p, i) => {
+    console.log(`[VideoLecture] Paragraph ${i}: "${p.substring(0, 50)}${p.length > 50 ? '...' : ''}"`);
+  });
+
+  // Get media for each slide
+  const getMediaForSlide = (index: number): FetchedMedia[] => {
+    if (!media || !Array.isArray(media) || index >= media.length) {
+      return [];
+    }
+    return media[index] || [];
+  };
+
+  // Calculate total duration based on content
+  const useCustomIntro = USE_CUSTOM_INTRO && customIntroPath;
+  const introDuration = useCustomIntro ? CUSTOM_INTRO_DURATION : LOGO_DURATION;
+  const titleDuration = TITLE_DURATION;
+  const slideDuration = SLIDE_DURATION;
+  const endDuration = END_LOGO_DURATION;
   
-  // Debug logs to track props
-  console.log('VideoLecture props:', { 
-    scriptLength: script?.length,
-    audioUrl: audioUrl?.substring(0, 50) + '...',
-    hasMedia: !!media,
-    mediaLength: media?.length,
-    customIntroPath: customIntroPath?.substring(0, 50) + '...'
+  // Correctly calculate slide positions with frame precision
+  const introEndFrame = introDuration;
+  const titleEndFrame = introEndFrame + titleDuration;
+  
+  // Create an array to track slide positions for debugging
+  const slidePositions = filteredParagraphs.map((_, index) => {
+    const startFrame = titleEndFrame + (index * slideDuration);
+    const endFrame = startFrame + slideDuration;
+    return { startFrame, endFrame };
   });
   
-  // Parse script to extract title and paragraphs
-  const lines = script.split('\n');
-  const title = lines[0].replace(/^#\s+/, '');
-  const paragraphs = lines.slice(1).join('\n').split('\n\n').filter(p => p.trim().length > 0);
+  // Log slide positions for debugging
+  console.log(`[VideoLecture] Frame ${frame}: Intro ends at ${introEndFrame}, Title ends at ${titleEndFrame}`);
+  slidePositions.forEach((pos, i) => {
+    console.log(`[VideoLecture] Slide ${i}: starts at frame ${pos.startFrame}, ends at ${pos.endFrame}`);
+  });
   
-  // Debug media arrays
-  if (media) {
-    console.log(`Media array has ${media.length} items`);
-    if (media.length > 0 && media[0]) {
-      console.log(`First media item:`, media[0][0]?.url?.substring(0, 50) + '...');
-    }
-  }
+  // Calculate total duration based on content
+  const totalDuration = introDuration + titleDuration + (filteredParagraphs.length * slideDuration) + endDuration;
   
-  // Determine if we're using a custom intro
-  const hasCustomIntro = !!customIntroPath;
-  console.log('Using custom intro:', hasCustomIntro, customIntroPath?.substring(0, 50));
-  
-  // Calculate when each slide starts (in frames)
-  const introDuration = hasCustomIntro ? CUSTOM_INTRO_DURATION : LOGO_DURATION;
-  console.log('Intro duration:', introDuration / fps, 'seconds');
-  
-  // Calculate when each section starts
-  const titleStart = introDuration;
-  const contentStart = titleStart + TITLE_DURATION;
-  const contentDuration = paragraphs.length * SLIDE_DURATION;
-  const outroStart = contentStart + contentDuration;
-  
-  // Calculate audio start time
-  // If we have a custom intro, we should wait until it finishes before starting the main audio
-  const audioStartFrame = hasCustomIntro ? introDuration : AUDIO_START_DELAY;
-  console.log('Audio starts at frame:', audioStartFrame, '(', audioStartFrame / fps, 'seconds)');
-  
-  // Determine what to render based on current frame
+  // Set audio to start exactly after intro + title (13s intro + 4s title = 17s)
+  // At 30fps: (13 + 4) * 30 = 510 frames
+  const audioStartFrame = introDuration + titleDuration; // Dynamic calculation based on actual durations
+  console.log(`[VideoLecture] Audio will start at frame ${audioStartFrame} (${audioStartFrame/fps} seconds)`);
+  console.log(`[VideoLecture] Timing breakdown: Intro=${introDuration/fps}s, Title=${titleDuration/fps}s, Total before audio=${audioStartFrame/fps}s`);
+
+  // Render content based on current frame
   const renderCurrentContent = () => {
-    // Intro sequence (logo)
-    if (frame < introDuration) {
-      if (hasCustomIntro && customIntroPath) {
-        return <CustomIntro videoPath={customIntroPath} />;
-      } else {
-        return <LogoIntro />;
-      }
+    // Show intro
+    if (frame < introEndFrame) {
+      return useCustomIntro && customIntroPath 
+        ? <CustomIntro videoPath={customIntroPath} /> 
+        : <LogoIntro />;
     }
     
-    // Title slide
-    if (frame < contentStart) {
+    // Show title
+    if (frame < titleEndFrame) {
       return <TitleSlide title={title} />;
     }
     
-    // Content slides
-    if (frame < outroStart) {
-      const slideIndex = Math.floor((frame - contentStart) / SLIDE_DURATION);
-      const text = paragraphs[Math.min(slideIndex, paragraphs.length - 1)];
-      
-      // Check if we have media for this paragraph
-      const slideMedia = media && media[slideIndex] ? media[slideIndex] : undefined;
-      const hasMediaForSlide = slideMedia && slideMedia.length > 0;
-      
-      // For every 3rd slide, show a graph
-      const includeGraph = slideIndex % 3 === 1;
-      
-      // Use Media slide if we have media, otherwise use text slide
-      if (hasMediaForSlide) {
-        return (
-          <MediaSlide 
-            text={text} 
-            index={slideIndex} 
-            media={slideMedia}
-            includeGraph={includeGraph}
-          />
-        );
-      } else {
-        // Fallback to text slide if no media
-        return (
-          <TextSlide 
-            text={text} 
-            index={slideIndex} 
-            includeGraph={includeGraph}
-          />
-        );
-      }
+    // Calculate current slide index
+    const slideIndex = Math.floor((frame - titleEndFrame) / slideDuration);
+    
+    // Show content slides
+    if (slideIndex < filteredParagraphs.length) {
+      return (
+        <TextSlide 
+          text={filteredParagraphs[slideIndex]} 
+          index={slideIndex}
+          includeAnimation={true}
+          includeGraph={slideIndex % 3 === 0} // Show graph on every third slide
+          media={getMediaForSlide(slideIndex)}
+        />
+      );
     }
     
-    // Outro sequence (logo)
+    // Show outro
     return <LogoOutro />;
   };
-  
+
   return (
-    <AbsoluteFill style={{ backgroundColor: COLORS.background }}>
-      {/* Render current content based on frame */}
+    <AbsoluteFill style={{ backgroundColor: '#111111' }}>
       {renderCurrentContent()}
       
-      {/* Audio track starts after intro */}
+      {/* Render audio with precise timing */}
       {audioUrl && (
-        <Audio
-          src={audioUrl}
+        <Audio 
+          src={audioUrl} 
           startFrom={audioStartFrame}
-          volume={1}
+          endAt={totalDuration}
+          volume={(frame: number) => {
+            // Add a fade-in to prevent clicks/pops
+            if (frame < audioStartFrame + 30) {
+              return Math.min(1, (frame - audioStartFrame) / 30);
+            }
+            return 1;
+          }}
         />
       )}
+      
+      {/* Debug frame counter */}
+      <div style={{
+        position: 'absolute',
+        bottom: 5,
+        right: 5,
+        color: 'rgba(255,255,255,0.3)',
+        fontSize: 12,
+        fontFamily: 'monospace'
+      }}>
+        Frame: {frame} | {Math.round(frame/fps)}s
+      </div>
     </AbsoluteFill>
   );
 }; 

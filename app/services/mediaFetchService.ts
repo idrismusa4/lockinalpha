@@ -47,6 +47,32 @@ export interface FetchedMedia {
   keywords: string[];
 }
 
+// Giphy API response interfaces
+interface GiphyImage {
+  url: string;
+  width: string;
+  height: string;
+}
+
+interface GiphyImages {
+  original: GiphyImage;
+  fixed_width: GiphyImage;
+}
+
+interface GiphyData {
+  id: string;
+  title: string;
+  images: GiphyImages;
+}
+
+interface GiphyResponse {
+  data: GiphyData[];
+  meta: {
+    status: number;
+    msg: string;
+  };
+}
+
 // API Key from environment variable
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY || 'YOUR_API_KEY';
 
@@ -94,29 +120,67 @@ export async function fetchGifsFromGiphy(options: MediaFetchOptions): Promise<Fe
     const limit = options.limit || 1;
     const rating = options.rating || 'g';
     
+    console.log(`Fetching GIFs from Giphy with query: "${query}", limit: ${limit}`);
+    
     // Make API request to Giphy
     const response = await fetch(
-      `https://api.giphy.com/v1/gifs/search?q=${query}&api_key=${GIPHY_API_KEY}&limit=${limit}&rating=${rating}`
+      `https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&api_key=${GIPHY_API_KEY}&limit=${limit}&rating=${rating}`
     );
     
     if (!response.ok) {
       throw new Error(`Giphy API error: ${response.status}`);
     }
     
-    const data = await response.json();
+    const data = await response.json() as GiphyResponse;
+    
+    // Validate response
+    if (!data.data || !Array.isArray(data.data)) {
+      console.error('Invalid Giphy API response:', data);
+      return [];
+    }
+    
+    // Check if we got any results
+    if (data.data.length === 0) {
+      console.log(`No GIFs found for query: "${query}"`);
+      return [];
+    }
     
     // Map the Giphy response to our FetchedMedia interface
-    return data.data.map((gif: any) => ({
-      id: gif.id,
-      url: gif.images.original.url,
-      previewUrl: gif.images.fixed_width.url,
-      width: parseInt(gif.images.original.width),
-      height: parseInt(gif.images.original.height),
-      type: 'gif' as MediaType,
-      source: 'giphy' as MediaSource,
-      title: gif.title,
-      keywords: query.split(' ')
-    }));
+    const results = data.data.map((gif: GiphyData) => {
+      try {
+        // Use default values if any properties are missing
+        const width = gif.images?.original?.width ? parseInt(gif.images.original.width) : 480;
+        const height = gif.images?.original?.height ? parseInt(gif.images.original.height) : 270;
+        
+        return {
+          id: gif.id || `giphy-${Date.now()}`,
+          url: gif.images?.original?.url || '',
+          previewUrl: gif.images?.fixed_width?.url || '',
+          width: isNaN(width) ? 480 : width,
+          height: isNaN(height) ? 270 : height,
+          type: 'gif' as MediaType,
+          source: 'giphy' as MediaSource,
+          title: gif.title || '',
+          keywords: query.split(' ')
+        };
+      } catch (itemError) {
+        console.error('Error processing Giphy item:', itemError);
+        // Return a placeholder on error
+        return {
+          id: `giphy-error-${Date.now()}`,
+          url: '',
+          width: 480,
+          height: 270,
+          type: 'gif' as MediaType,
+          source: 'giphy' as MediaSource,
+          title: 'Error',
+          keywords: []
+        };
+      }
+    }).filter(item => item.url); // Filter out items with empty URLs
+    
+    console.log(`Successfully fetched ${results.length} GIFs from Giphy`);
+    return results;
   } catch (error) {
     console.error('Error fetching GIFs from Giphy:', error);
     return [];

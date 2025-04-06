@@ -588,22 +588,24 @@ async function tryRemotionRender(
     const numSlides = Math.max(1, paragraphs.length);
     
     // Use our constants from the VideoLecture component
-    // Note: These values reflect 60fps
-    const logoFrames = 180; // 3 seconds at 60fps
-    const customIntroFrames = 780; // 13 seconds at 60fps (updated to match your intro)
-    const titleFrames = 240; // 4 seconds at 60fps
-    const slideFrames = numSlides * 600; // 10 seconds per slide at 60fps
-    const endLogoFrames = 180; // 3 seconds at 60fps
+    // Note: These values reflect 30fps
+    const logoFrames = 90; // 3 seconds at 30fps
+    const customIntroFrames = 390; // 13 seconds at 30fps
+    const titleFrames = 120; // 4 seconds at 30fps
+    const slideFrames = numSlides * 300; // 10 seconds per slide at 30fps
+    const endLogoFrames = 90; // 3 seconds at 30fps
     
     // Calculate total frames based on intro type
     const introFrames = hasCustomIntro ? customIntroFrames : logoFrames;
     const totalFrames = introFrames + titleFrames + slideFrames + endLogoFrames;
     
     // Ensure reasonable duration (between 10s and 5min)
-    const fps = 60;
-    const durationInFrames = Math.max(600, Math.min(18000, totalFrames));
+    const fps = 30;
+    const durationInFrames = Math.max(300, Math.min(9000, totalFrames));
     
     console.log(`Rendering video with ${durationInFrames} frames at ${fps} fps for ${numSlides} slides...`);
+    console.log(`Video timing: intro=${introFrames/fps}s, title=${titleFrames/fps}s, content=${slideFrames/fps}s, outro=${endLogoFrames/fps}s`);
+    console.log(`Video will start main audio at: ${(introFrames + titleFrames)/fps}s`);
     
     // Select the composition to render
     const composition = await selectComposition({
@@ -624,15 +626,15 @@ async function tryRemotionRender(
     }
     
     // Render the video with additional properties
-    console.log(`Rendering video to ${outputPath} at ${fps}fps (1920x1080)...`);
+    console.log(`Rendering video to ${outputPath} at ${fps}fps (1280x720)...`);
     
     // Create render options with proper type assertions for durationInFrames and fps
     const renderOptions = {
       composition: {
         ...composition,
-        width: 1920,
-        height: 1080,
-        fps: 60,
+        width: 1280,
+        height: 720,
+        fps: 30, // Changed from 60fps to 30fps for faster rendering
         durationInFrames
       },
       serveUrl: bundleLocation,
@@ -641,9 +643,9 @@ async function tryRemotionRender(
       imageFormat: 'jpeg',
       pixelFormat: 'yuv420p',
       // Enhanced video quality settings - use only CRF, not both CRF and videoBitrate
-      crf: 18, // Lower CRF for better quality (18-23 is considered visually lossless)
-      // videoBitrate: '10M', // Removed to avoid conflict with CRF
-      audioBitrate: '320k', // Higher audio bitrate
+      crf: 22,
+      // videoBitrate: '8M',
+      audioBitrate: '320k',
     } as any; // Use type assertion to avoid TypeScript errors
     
     await renderMedia(renderOptions);

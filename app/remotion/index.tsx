@@ -4,7 +4,10 @@ import {
   LOGO_DURATION, 
   TITLE_DURATION, 
   SLIDE_DURATION, 
-  END_LOGO_DURATION 
+  END_LOGO_DURATION,
+  WIDTH,
+  HEIGHT,
+  FPS
 } from './constants';
 import { FetchedMedia } from '../services/mediaFetchService';
 
@@ -26,8 +29,8 @@ const calculateDuration = (script: string): number => {
   const paragraphs = script.split('\n\n').filter(p => p.trim().length > 0);
   const numSlides = Math.max(1, paragraphs.length);
   
-  // Calculate total duration (doubled for 60fps)
-  const totalDuration = (LOGO_DURATION + TITLE_DURATION + (numSlides * SLIDE_DURATION) + END_LOGO_DURATION) * 2;
+  // Calculate total duration
+  const totalDuration = LOGO_DURATION + TITLE_DURATION + (numSlides * SLIDE_DURATION) + END_LOGO_DURATION;
   
   // Ensure minimum duration of 10 seconds at 60fps
   return Math.max(600, totalDuration);
@@ -43,9 +46,9 @@ export const RemotionVideo = () => {
         id="VideoLecture"
         component={VideoLecture}
         durationInFrames={3600} // Default 60 seconds at 60fps (will be overridden by props)
-        fps={60}
-        width={1920}
-        height={1080}
+        fps={FPS}
+        width={WIDTH}
+        height={HEIGHT}
         defaultProps={{
           script: "# Sample Video Lecture\n\nThis is a sample video lecture script.\n\nIt demonstrates how the video will look with multiple paragraphs.\n\nYou can include data that will show as graphs and charts.\n\nThe stickman will animate differently based on the content and context.",
           audioUrl: "",

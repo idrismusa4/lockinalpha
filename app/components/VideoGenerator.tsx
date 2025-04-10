@@ -9,7 +9,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle, Volume2, Pause } from "lucide-react";
+import { AlertCircle, Volume2, Pause, Search, Loader2 } from "lucide-react";
+import { extractSceneKeywords, extractVisualSubject } from '../services/keywordExtractionService';
+import { FetchedMedia } from '../services/mediaFetchService';
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Separator } from "@/components/ui/separator";
 
 interface VideoGeneratorProps {
   script: string;
@@ -26,6 +31,13 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [statusCheckAttempts, setStatusCheckAttempts] = useState(0);
   const [previewText, setPreviewText] = useState<string>("");
+  // New states for script analysis
+  const [keywords, setKeywords] = useState<any[]>([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [mediaResults, setMediaResults] = useState<FetchedMedia[][]>([]);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [hasAnalyzed, setHasAnalyzed] = useState(false);
+  
   const maxStatusCheckAttempts = 10;
   const statusCheckRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -135,6 +147,53 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
     }
   };
   
+  // New function to analyze script
+  const analyzeScript = async () => {
+    if (!script) return;
+
+    try {
+      setIsAnalyzing(true);
+      setAnalyzeError(null);
+      setError(null);
+      
+      // Extract keywords from script
+      const sceneKeywords = extractSceneKeywords(script);
+      setKeywords(sceneKeywords);
+      
+      // Fetch media for each scene
+      const fetchMediaPromise = fetch('/api/fetchMedia', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ script }),
+      });
+      
+      // Set a timeout to handle potential long-running requests
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Media fetching timed out')), 15000)
+      );
+      
+      // Race the fetch against the timeout
+      const response = await Promise.race([fetchMediaPromise, timeoutPromise]) as Response;
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch media: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      setMediaResults(result.media);
+      setHasAnalyzed(true);
+      
+      console.log(`Analyzed script: ${sceneKeywords.length} scenes, ${result.media.flat().length} media items`);
+    } catch (err) {
+      console.error('Error analyzing script:', err);
+      setAnalyzeError(err instanceof Error ? err.message : 'An unknown error occurred');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+  
   // Function to check video generation status with a specific job ID
   const checkStatusWithId = async (specificJobId: string) => {
     try {
@@ -230,13 +289,23 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
     setStatusCheckAttempts(0);
     cleanup();
     
+    // If script hasn't been analyzed yet, recommend analysis first
+    if (!hasAnalyzed) {
+      // Do a quick analysis before generation
+      await analyzeScript();
+    }
+    
     try {
       console.log("Starting media generation process...");
       
-      // Start video or audio generation with the selected voice
+      // Include media results if available
+      const mediaToUse = hasAnalyzed ? mediaResults : undefined;
+      
+      // Start video or audio generation with the selected voice and media
       const generateResponse = await axios.post("/api/generateVideo", {
         script,
-        voiceId: selectedVoice
+        voiceId: selectedVoice,
+        media: mediaToUse
       });
       
       const newJobId = generateResponse.data.jobId;
@@ -249,62 +318,139 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
       setJobId(newJobId);
       console.log(`Generation job started with ID: ${newJobId}`);
       
-      // Start checking the status after a short delay
-      statusCheckRef.current = setTimeout(() => checkStatusWithId(newJobId), 2000);
-      
+      // Start checking status
+      await checkStatusWithId(newJobId);
     } catch (err) {
-      console.error("Error generating media:", err);
+      console.error("Error starting generation:", err);
       
-      // Try to provide more helpful error messages
+      // Try to provide a more specific error message
       if (axios.isAxiosError(err) && err.response) {
-        setError(`Generation failed: ${err.response.status} ${err.response.statusText} - ${err.response.data?.error || 'Unknown error'}`);
+        const errorMessage = err.response.data?.error || "Failed to start generation";
+        setError(`${errorMessage} (Status: ${err.response.status})`);
       } else {
-        setError(`An error occurred during generation: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        setError(`Failed to start media generation: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
       
       setLoading(false);
     }
   };
   
-  // Function to retry video generation
   const handleRetry = () => {
-    // Clean up any existing timeouts
+    setError(null);
+    setProgress(0);
+    // Keep the same voice selection but clear other state
+    setJobId(null);
+    setStatusCheckAttempts(0);
     cleanup();
-    
-    // Just call handleGenerateVideo again
-    handleGenerateVideo();
   };
   
-  // Cleanup on unmount
   useEffect(() => {
-    return () => {
-      cleanup();
-    };
+    // Clean up when the component unmounts
+    return cleanup;
   }, []);
   
   return (
-    <Card>
+    <Card className="w-full">
       <CardHeader>
-        <CardTitle>Generate Video Lecture</CardTitle>
+        <CardTitle>Create Video</CardTitle>
         <CardDescription>
-          Convert your script into a professional video lecture
+          Generate a video lecture from your script with visuals and voice narration
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        
+        {/* Script Analysis Section */}
         <div className="space-y-2">
-          <Label htmlFor="script">Lecture Script</Label>
-          <div className="p-3 bg-muted rounded-md max-h-48 overflow-y-auto">
-            <p className="text-sm whitespace-pre-wrap">{script}</p>
+          <div className="flex items-center justify-between">
+            <Label>Script Analysis</Label>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={analyzeScript}
+              disabled={isAnalyzing || loading}
+            >
+              {isAnalyzing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <Search className="mr-2 h-4 w-4" />
+                  {hasAnalyzed ? "Re-analyze" : "Analyze Script"}
+                </>
+              )}
+            </Button>
           </div>
+          
+          {analyzeError && (
+            <Alert variant="destructive" className="mt-2">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Analysis Error</AlertTitle>
+              <AlertDescription>{analyzeError}</AlertDescription>
+            </Alert>
+          )}
+          
+          {hasAnalyzed && (
+            <Accordion type="single" collapsible className="w-full mt-2">
+              <AccordionItem value="analysis">
+                <AccordionTrigger>
+                  Analyzed {keywords.length} scenes with {mediaResults.flat().length} media items
+                </AccordionTrigger>
+                <AccordionContent>
+                  <ScrollArea className="h-[200px] rounded-md border p-4">
+                    <div className="space-y-4">
+                      {keywords.map((scene, index) => (
+                        <div key={index} className="border p-3 rounded text-sm">
+                          <p className="font-medium">Scene {index + 1}</p>
+                          <p className="text-xs text-muted-foreground"><span className="font-medium">Main:</span> {scene.mainConcept}</p>
+                          <p className="text-xs text-muted-foreground">
+                            <span className="font-medium">Keywords:</span> {scene.keywords.map((k: any) => k.keyword).join(', ')}
+                          </p>
+                          
+                          {mediaResults[index] && mediaResults[index].length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-xs font-medium">Media:</p>
+                              <div className="flex flex-wrap gap-2 mt-1">
+                                {mediaResults[index].map((media, mediaIndex) => (
+                                  <div key={mediaIndex} className="border p-1 rounded w-20 h-20">
+                                    <img 
+                                      src={media.previewUrl || media.url} 
+                                      alt={media.title || `Media ${mediaIndex}`}
+                                      className="w-full h-full object-cover rounded"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          )}
         </div>
         
+        <Separator />
+        
+        {/* Voice Selection */}
         <div className="space-y-2">
           <Label htmlFor="voice">Narrator Voice</Label>
-          <div className="flex gap-2">
+          <div className="flex flex-1 gap-2">
             <Select 
               value={selectedVoice} 
               onValueChange={handleVoiceChange}
-              disabled={loading || isPreviewing}
+              disabled={loading}
             >
               <SelectTrigger id="voice" className="flex-1">
                 <SelectValue placeholder="Select a voice" />
@@ -317,17 +463,19 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
                 ))}
               </SelectContent>
             </Select>
+            
             <Button
+              type="button"
               variant="outline"
               onClick={handlePreviewVoice}
-              disabled={loading || !script}
+              disabled={loading}
               className="flex items-center gap-2"
               size="sm"
             >
               {isPreviewing ? (
                 <>
                   <Pause className="h-4 w-4" />
-                  <span>Pause</span>
+                  <span>Stop</span>
                 </>
               ) : (
                 <>
@@ -337,54 +485,46 @@ export default function VideoGenerator({ script, onVideoGenerated }: VideoGenera
               )}
             </Button>
           </div>
+          
           <p className="text-xs text-muted-foreground">
-            Select a voice and click Preview to hear how it sounds
+            Choose a voice for your video narration
           </p>
         </div>
         
+        {/* Generation Status */}
         {loading && (
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
-              <span>Generating video</span>
+              <span>Generating video...</span>
               <span>{progress}%</span>
             </div>
             <Progress value={progress} className="w-full" />
             <p className="text-xs text-muted-foreground">
-              This may take several minutes depending on the length of the script
+              This may take several minutes. Please don't close this page.
             </p>
-            {jobId && (
-              <p className="text-xs text-muted-foreground">
-                Job ID: {jobId}
-              </p>
-            )}
           </div>
         )}
         
-        {error && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>
-              {error}
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={handleRetry} 
-                className="mt-2"
-              >
-                Retry
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
-        
-        <Button
-          onClick={handleGenerateVideo}
-          disabled={loading || !script}
-          className="w-full"
-        >
-          {loading ? "Generating Video..." : "Generate Video Lecture"}
-        </Button>
+        {/* Action Buttons */}
+        <div className="pt-2">
+          {error ? (
+            <Button 
+              variant="outline" 
+              onClick={handleRetry}
+              className="w-full"
+            >
+              Try Again
+            </Button>
+          ) : (
+            <Button 
+              disabled={loading} 
+              onClick={handleGenerateVideo}
+              className="w-full"
+            >
+              {loading ? 'Generating...' : 'Generate Video'}
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

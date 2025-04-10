@@ -6,6 +6,7 @@ import os from 'os';
 import path from 'path';
 import { storage } from '../supabase';
 import { DEFAULT_VOICE_ID } from './voiceOptions';
+import { FetchedMedia } from './mediaFetchService';
 
 // Define paths for temporary files
 const TMP_DIR = os.tmpdir();
@@ -14,6 +15,7 @@ interface VideoRenderParams {
   script: string;
   jobId: string;
   voiceId?: string;
+  media?: FetchedMedia[][];
   onProgress?: (progress: number) => void;
 }
 
@@ -21,6 +23,7 @@ export async function renderVideoWithRemotion({
   script,
   jobId,
   voiceId = DEFAULT_VOICE_ID,
+  media,
   onProgress = () => {}
 }: VideoRenderParams): Promise<string> {
   try {
@@ -50,13 +53,22 @@ export async function renderVideoWithRemotion({
       
       onProgress(30);
       
-      // Select the composition to render
+      // Log if media exists
+      if (media && Array.isArray(media)) {
+        console.log(`Rendering with ${media.length} media segments`);
+        console.log(`First media item: ${media[0]?.[0]?.url?.substring(0, 50) || 'none'}`);
+      } else {
+        console.log('Rendering without media data');
+      }
+      
+      // Select the composition to render with media if available
       const composition = await selectComposition({
         serveUrl: bundleLocation,
         id: 'VideoLecture',
         inputProps: {
           script,
           voiceId,
+          media, // Pass the media to the Remotion composition
         },
       });
       

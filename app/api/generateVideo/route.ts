@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 // We'll use dynamic import instead of require
 import { createJob, updateJobStatus, completeJob, failJob, updateJobProgress } from '../../services/jobService';
+import { FetchedMedia } from '../../services/mediaFetchService';
 
 // Define interface for expected request body
 interface VideoGenerationRequest {
   script: string;
   voiceId?: string;
+  media?: FetchedMedia[][];
 }
 
 // Add type for the renderVideoFallback function
@@ -14,6 +16,7 @@ type RenderVideoFallbackFunction = (params: {
   script: string;
   jobId: string;
   voiceId?: string;
+  media?: FetchedMedia[][];
   onProgress?: (progress: number) => void;
 }) => Promise<string>;
 
@@ -22,13 +25,20 @@ export async function POST(request: Request) {
   
   try {
     const body = await request.json() as VideoGenerationRequest;
-    const { script, voiceId } = body;
+    const { script, voiceId, media } = body;
     
     if (!script) {
       return NextResponse.json(
         { error: 'Script is required' },
         { status: 400 }
       );
+    }
+    
+    // Log media if provided
+    if (media && Array.isArray(media)) {
+      console.log(`Received media data: ${media.length} scenes, ${media.flat().length} total items`);
+    } else {
+      console.log('No media data provided, using automatic media generation');
     }
     
     // Dynamically import the videoFallbackService
@@ -61,7 +71,7 @@ export async function POST(request: Request) {
     
     // Start processing in the background without awaiting
     // This allows the API to return immediately with the job ID
-    processVideoGeneration(jobId, script, voiceId).catch(error => {
+    processVideoGeneration(jobId, script, voiceId, media).catch(error => {
       console.error(`Error generating video for job ${jobId}:`, error);
       failJob(jobId, error instanceof Error ? error.message : String(error))
         .catch(err => console.error(`Failed to mark job ${jobId} as failed:`, err));
@@ -91,7 +101,12 @@ export async function POST(request: Request) {
   }
 }
 
-async function processVideoGeneration(jobId: string, script: string, voiceId?: string): Promise<string> {
+async function processVideoGeneration(
+  jobId: string, 
+  script: string, 
+  voiceId?: string,
+  media?: FetchedMedia[][]
+): Promise<string> {
   try {
     console.log(`Starting video generation process for job ${jobId}`);
     
@@ -118,11 +133,17 @@ async function processVideoGeneration(jobId: string, script: string, voiceId?: s
       throw new Error('Video rendering function could not be loaded');
     }
     
+    // Log media information before rendering
+    if (media && Array.isArray(media)) {
+      console.log(`Using ${media.length} media scenes for job ${jobId}`);
+    }
+    
     // Use the fallback video rendering service instead of Remotion
     const videoUrl = await renderVideoFallback({
       script,
       jobId,
       voiceId,
+      media, // Pass media to the rendering function
       onProgress: async (progress: number) => {
         // Update job progress
         await updateJobProgress(jobId, progress);

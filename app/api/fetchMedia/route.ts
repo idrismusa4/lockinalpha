@@ -6,12 +6,13 @@ interface FetchMediaRequest {
   script: string;
   mediaTypes?: string[];
   limit?: number;
+  itemsPerSlide?: number;
 }
 
 export async function POST(request: Request) {
   try {
     const body = await request.json() as FetchMediaRequest;
-    const { script, limit = 1 } = body;
+    const { script, limit = 1, itemsPerSlide = 2 } = body;
     
     if (!script) {
       return NextResponse.json(
@@ -28,8 +29,10 @@ export async function POST(request: Request) {
       );
     }
     
-    // Fetch media for the script
-    const media = await fetchMediaForScript(script);
+    console.log(`Fetching media for script with ${itemsPerSlide} items per slide`);
+    
+    // Fetch media for the script with the specified itemsPerSlide
+    const media = await fetchMediaForScript(script, itemsPerSlide);
     
     // Return the fetched media
     return NextResponse.json({ 

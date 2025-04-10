@@ -2,25 +2,31 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 export function middleware(request: NextRequest) {
-  // Clone the request headers
-  const requestHeaders = new Headers(request.headers);
-  const response = NextResponse.next({
-    request: {
-      headers: requestHeaders,
-    },
-  });
+  const response = NextResponse.next();
 
-  // Add the required headers for Cross-Origin Isolation
-  response.headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  // Add COEP headers for video playback
+  response.headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
   response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-  
+  response.headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  response.headers.set('Access-Control-Allow-Origin', '*');
+  response.headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  // Add security headers
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+
   return response;
 }
 
 // Only run the middleware for API routes that need cross-origin isolation
 export const config = {
   matcher: [
-    '/api/:path*',
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    '/video/:path*',
+    '/api/video/:path*',
+    '/api/audio/:path*',
+    '/api/transcript/:path*',
+    '/api/media-proxy/:path*',
   ],
 }; 

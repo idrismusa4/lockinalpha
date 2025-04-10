@@ -141,6 +141,9 @@ export async function proxyMediaFile(url: string): Promise<NextResponse> {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+        'Cross-Origin-Opener-Policy': 'same-origin',
         'Cache-Control': 'public, max-age=86400', // Cache for 1 day
         'X-Proxy-Source': 'lockin-proxy'
       }

@@ -1354,8 +1354,8 @@ export const VideoLecture: React.FC<VideoLectureProps> = ({
     
     // Show content slides
     if (slideIndex < filteredParagraphs.length) {
-      return (
-        <TextSlide 
+        return (
+            <TextSlide 
           text={filteredParagraphs[slideIndex]} 
           index={slideIndex}
           includeAnimation={true}

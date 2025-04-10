@@ -12,7 +12,7 @@ export default function VideoPage() {
       <h1 className="text-3xl font-bold mb-6 text-center">Video Lecture Generator</h1>
       <p className="text-muted-foreground mb-8 text-center max-w-2xl mx-auto">
         Enter your script below and we'll generate a professional video lecture.
-        Our AI will create a visually engaging presentation based on your content.
+        Our AI will analyze your content and create a visually engaging presentation with relevant media.
       </p>
       
       <VideoForm />
@@ -25,8 +25,8 @@ export default function VideoPage() {
             <p>Enter the text content for your video lecture. You can use markdown formatting for better structure.</p>
           </div>
           <div className="bg-card p-6 rounded-lg border">
-            <div className="font-bold text-xl mb-2">2. Generate</div>
-            <p>Click the generate button and our system will transform your script into a video presentation.</p>
+            <div className="font-bold text-xl mb-2">2. Analyze & Generate</div>
+            <p>Our AI will analyze your script, select relevant visuals, and transform it into an engaging video presentation.</p>
           </div>
           <div className="bg-card p-6 rounded-lg border">
             <div className="font-bold text-xl mb-2">3. Share or Download</div>

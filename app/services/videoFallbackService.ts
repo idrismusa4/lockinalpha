@@ -12,6 +12,7 @@ import { promisify } from 'util';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { fetchMediaForScript, FetchedMedia } from './mediaFetchService';
+import { renderWithLambda } from './remotionLambdaService';
 
 // Promisify exec for async/await usage
 const execAsync = promisify(exec);
@@ -441,6 +442,26 @@ async function tryRemotionRender(
 ): Promise<boolean> {
   try {
     console.log('Attempting to render video using Remotion...');
+    
+    // First try Lambda rendering if configured
+    if (process.env.REMOTION_LAMBDA_FUNCTION_NAME && process.env.REMOTION_SERVE_URL) {
+      console.log('Attempting Lambda rendering...');
+      try {
+        const audioUrl = audioPath ? await convertFileToDataUrl(audioPath) : undefined;
+        return await renderWithLambda({
+          script,
+          audioUrl,
+          media,
+          customIntroPath: "",
+          onProgress: () => {}
+        });
+      } catch (lambdaError) {
+        console.error('Lambda rendering failed, falling back to local rendering:', lambdaError);
+      }
+    }
+
+    // Fall back to local rendering
+    console.log('Falling back to local rendering...');
     
     // Helper function to safely get basename
     const safeBasename = (filePath: string | undefined): string => {

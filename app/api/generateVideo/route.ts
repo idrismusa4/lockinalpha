@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 // We'll use dynamic import instead of require
 import { createJob, updateJobStatus, completeJob, failJob, updateJobProgress } from '../../services/jobService';
 import { FetchedMedia } from '../../services/mediaFetchService';
+import { renderVideoWithLambda } from '../../services/renderWithLambda';
 
 // Define interface for expected request body
 interface VideoGenerationRequest {
@@ -10,15 +11,6 @@ interface VideoGenerationRequest {
   voiceId?: string;
   media?: FetchedMedia[][];
 }
-
-// Add type for the renderVideoFallback function
-type RenderVideoFallbackFunction = (params: {
-  script: string;
-  jobId: string;
-  voiceId?: string;
-  media?: FetchedMedia[][];
-  onProgress?: (progress: number) => void;
-}) => Promise<string>;
 
 export async function POST(request: Request) {
   let jobId = '';
@@ -41,23 +33,10 @@ export async function POST(request: Request) {
       console.log('No media data provided, using automatic media generation');
     }
     
-    // Dynamically import the videoFallbackService
-    let renderVideoFallback: RenderVideoFallbackFunction | null = null;
-    try {
-      const videoModule = await import('../../services/videoFallbackService');
-      renderVideoFallback = videoModule.renderVideoFallback;
-    } catch (importError) {
-      console.error('Failed to import videoFallbackService:', importError);
-      return NextResponse.json(
-        { error: 'Video generation service is not available in this environment' },
-        { status: 500 }
-      );
-    }
-    
     // Check AWS credentials are configured
-    if (!process.env.MY_AWS_ACCESS_KEY_ID || !process.env.MY_AWS_SECRET_ACCESS_KEY) {
+    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
       return NextResponse.json(
-        { error: 'AWS credentials are not configured. Please set MY_AWS_ACCESS_KEY_ID and MY_AWS_SECRET_ACCESS_KEY environment variables.' },
+        { error: 'AWS credentials are not configured. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.' },
         { status: 500 }
       );
     }
@@ -116,34 +95,17 @@ async function processVideoGeneration(
       progress: 10
     });
     
-    // Dynamically import the videoFallbackService
-    let renderVideoFallback: RenderVideoFallbackFunction | null = null;
-    try {
-      const videoModule = await import('../../services/videoFallbackService');
-      renderVideoFallback = videoModule.renderVideoFallback;
-    } catch (importError) {
-      console.error('Failed to import videoFallbackService:', importError);
-      await failJob(jobId, 'Video generation service is not available in this environment');
-      throw new Error('Video generation service is not available');
-    }
-    
-    // Ensure renderVideoFallback was loaded successfully
-    if (!renderVideoFallback) {
-      await failJob(jobId, 'Video rendering function could not be loaded');
-      throw new Error('Video rendering function could not be loaded');
-    }
-    
     // Log media information before rendering
     if (media && Array.isArray(media)) {
       console.log(`Using ${media.length} media scenes for job ${jobId}`);
     }
     
-    // Use the fallback video rendering service instead of Remotion
-    const videoUrl = await renderVideoFallback({
+    // Use the Lambda video rendering service
+    const videoUrl = await renderVideoWithLambda({
       script,
       jobId,
       voiceId,
-      media, // Pass media to the rendering function
+      media,
       onProgress: async (progress: number) => {
         // Update job progress
         await updateJobProgress(jobId, progress);

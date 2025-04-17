@@ -7,6 +7,8 @@ import path from 'path';
 import { storage } from '../supabase';
 import { DEFAULT_VOICE_ID } from './voiceOptions';
 import { FetchedMedia } from './mediaFetchService';
+import { renderVideoWithLambda } from './renderWithLambda';
+import { generateSpeech } from './speechService';
 
 // Define paths for temporary files
 const TMP_DIR = os.tmpdir();
@@ -16,106 +18,35 @@ interface VideoRenderParams {
   jobId: string;
   voiceId?: string;
   media?: FetchedMedia[][];
-  onProgress?: (progress: number) => void;
 }
 
 export async function renderVideoWithRemotion({
   script,
   jobId,
-  voiceId = DEFAULT_VOICE_ID,
-  media,
-  onProgress = () => {}
+  voiceId,
+  media
 }: VideoRenderParams): Promise<string> {
   try {
-    // Create temporary directory for outputs
-    const outputDir = path.join(TMP_DIR, `remotion-${jobId}`);
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
+    console.log(`Starting video generation process with job ID: ${jobId}`);
     
-    // Path to output video file
-    const outputFile = path.join(outputDir, `${jobId}.mp4`);
+    // Generate the audio for the script
+    const audioUrl = await generateSpeech(script, voiceId);
+    console.log(`Audio generated: ${audioUrl}`);
     
-    onProgress(10);
-    
-    try {
-      // Dynamically import Remotion packages to avoid build errors
-      // These need to be installed: npm install @remotion/bundler @remotion/renderer @remotion/cli
-      const { bundle } = await import('@remotion/bundler');
-      const { renderMedia, selectComposition } = await import('@remotion/renderer');
-      
-      // Bundle the Remotion project
-      const bundleLocation = await bundle({
-        entryPoint: path.join(process.cwd(), 'app/remotion/index.tsx'),
-        // If you have a webpack override file, add it here
-        // webpackOverride: (config) => config,
-      });
-      
-      onProgress(30);
-      
-      // Log if media exists
-      if (media && Array.isArray(media)) {
-        console.log(`Rendering with ${media.length} media segments`);
-        console.log(`First media item: ${media[0]?.[0]?.url?.substring(0, 50) || 'none'}`);
-      } else {
-        console.log('Rendering without media data');
+    // Render the video with the generated audio
+    const url = await renderVideoWithLambda({
+      script,
+      jobId,
+      voiceId,
+      media,
+      onProgress: (progress) => {
+        console.log(`Render progress: ${progress}%`);
       }
-      
-      // Select the composition to render with media if available
-      const composition = await selectComposition({
-        serveUrl: bundleLocation,
-        id: 'VideoLecture',
-        inputProps: {
-          script,
-          voiceId,
-          media, // Pass the media to the Remotion composition
-        },
-      });
-      
-      onProgress(40);
-      
-      // Render the video
-      await renderMedia({
-        composition,
-        serveUrl: bundleLocation,
-        codec: 'h264',
-        outputLocation: outputFile,
-        imageFormat: 'jpeg',
-        onProgress: ({ progress }) => {
-          // Remotion progress ranges from 0 to 1, scale to 40-90%
-          const scaledProgress = 40 + Math.round(progress * 50);
-          onProgress(scaledProgress);
-        },
-      });
-      
-      onProgress(90);
-    } catch (remotionError) {
-      console.error('Error with Remotion rendering:', remotionError);
-      
-      // FALLBACK: Create a simple placeholder video file
-      // In a real implementation, you would use a different video generation method
-      // For demo purposes, we'll just create a very simple file
-      createPlaceholderVideoFile(outputFile, script, voiceId);
-      
-      onProgress(90);
-    }
+    });
     
-    // Upload the rendered video to Supabase Storage
-    const videoUrl = await uploadVideoToSupabase(outputFile, jobId);
-    
-    onProgress(100);
-    
-    // Clean up temporary files
-    try {
-      fs.unlinkSync(outputFile);
-      fs.rmdirSync(outputDir, { recursive: true });
-    } catch (cleanupError) {
-      console.warn('Failed to clean up temporary files:', cleanupError);
-    }
-    
-    return videoUrl;
+    return url;
   } catch (error) {
-    console.error('Error rendering video with Remotion:', error);
+    console.error('Error in video rendering process:', error);
     throw new Error(`Failed to render video: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

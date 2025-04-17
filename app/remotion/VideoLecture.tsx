@@ -521,23 +521,43 @@ const MediaSlide: React.FC<MediaSlideProps> = ({
   const textAnimationProgress = Math.min(1, frame / (text.length * 0.3)); 
   
   // Check if we have valid media
-  const hasMedia = media && media.length > 0;
+  const hasMedia = media && Array.isArray(media) && media.length > 0 && media.some(m => m && m.url);
+  
+  // Debug info about media
+  console.log(`[MediaSlide ${index}] Media provided: ${media ? 'YES' : 'NO'}, Valid: ${hasMedia}`);
+  if (media && Array.isArray(media)) {
+    media.forEach((item, i) => {
+      if (!item) {
+        console.log(`[MediaSlide ${index}] Media item ${i} is null or undefined`);
+      } else if (!item.url) {
+        console.log(`[MediaSlide ${index}] Media item ${i} has no URL:`, item);
+      } else {
+        console.log(`[MediaSlide ${index}] Media item ${i} URL: ${item.url.substring(0, 50)}...`);
+      }
+    });
+  }
+  
+  // Filter out invalid media items
+  const validMedia = hasMedia ? media.filter(item => item && item.url) : [];
+  
+  // Calculate grid layout based on number of valid media items
+  const mediaCount = validMedia.length;
   
   // Calculate grid layout based on number of media items
-  const gridColumns = hasMedia ? (
-    media.length === 1 ? 1 : 
-    media.length === 2 ? 2 : 
-    media.length === 3 ? 3 : 
-    media.length === 4 ? 2 : 
+  const gridColumns = mediaCount > 0 ? (
+    mediaCount === 1 ? 1 : 
+    mediaCount === 2 ? 2 : 
+    mediaCount === 3 ? 3 : 
+    mediaCount === 4 ? 2 : 
     3  // Default to 3 columns for 5+ items
   ) : 1;
   
-  const gridRows = hasMedia ? (
-    media.length === 1 ? 1 : 
-    media.length === 2 ? 1 : 
-    media.length === 3 ? 1 : 
-    media.length === 4 ? 2 : 
-    Math.ceil(media.length / 3)  // Calculate rows needed for grid
+  const gridRows = mediaCount > 0 ? (
+    mediaCount === 1 ? 1 : 
+    mediaCount === 2 ? 1 : 
+    mediaCount === 3 ? 1 : 
+    mediaCount === 4 ? 2 : 
+    Math.ceil(mediaCount / 3)  // Calculate rows needed for grid
   ) : 1;
   
   // Determine max size for media based on layout
@@ -575,9 +595,9 @@ const MediaSlide: React.FC<MediaSlideProps> = ({
   };
   
   // Render a single media item with animations
-  const renderMediaItem = (item: FetchedMedia, index: number) => {
+  const renderMediaItem = (item: FetchedMedia, itemIndex: number) => {
     // Stagger the animations slightly for each item
-    const staggerDelay = index * 5;
+    const staggerDelay = itemIndex * 5;
     
     // Calculate dimensions for this specific media
     const mediaWidth = item.width || MAX_MEDIA_WIDTH;
@@ -591,7 +611,7 @@ const MediaSlide: React.FC<MediaSlideProps> = ({
     
     // Apply a smaller scale to avoid overwhelming the viewer
     // For multiple media items, make them smaller
-    const adjustedScaleFactor = media && media.length > 1 ? 
+    const adjustedScaleFactor = mediaCount > 1 ? 
       scaleFactor * 0.9 : 
       scaleFactor * 0.8;
     
@@ -617,12 +637,12 @@ const MediaSlide: React.FC<MediaSlideProps> = ({
           stiffness: 80,
         },
       }),
-      translateX: Math.sin((frame + index * 10) / 100) * 5,
+      translateX: Math.sin((frame + itemIndex * 10) / 100) * 5,
     };
     
     return (
       <div
-        key={`media-${index}`}
+        key={`media-${itemIndex}`}
         style={{
           display: 'flex',
           justifyContent: 'center',
@@ -633,6 +653,7 @@ const MediaSlide: React.FC<MediaSlideProps> = ({
           transition: 'all 0.3s ease-in-out',
         }}
       >
+        {/* First try using Img component if available */}
         {Img ? (
           <Img
             src={item.url}
@@ -679,7 +700,7 @@ const MediaSlide: React.FC<MediaSlideProps> = ({
       }}
     >
       {/* Media grid container - takes up most of the screen */}
-      {hasMedia && (
+      {validMedia.length > 0 ? (
         <div
           style={{
             position: 'relative',
@@ -704,7 +725,33 @@ const MediaSlide: React.FC<MediaSlideProps> = ({
               justifyItems: 'center',
             }}
           >
-            {media && media.map((item, idx) => item && item.url ? renderMediaItem(item, idx) : null)}
+            {validMedia.map((item, idx) => renderMediaItem(item, idx))}
+          </div>
+        </div>
+      ) : (
+        // Visual debug placeholder when no valid media
+        <div
+          style={{
+            position: 'relative',
+            width: '70%',
+            height: '40%',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            margin: '0 auto 20px',
+            backgroundColor: 'rgba(255, 0, 0, 0.1)',
+            border: '2px dashed rgba(255, 0, 0, 0.5)',
+            borderRadius: 10,
+          }}
+        >
+          <div style={{ 
+            padding: 20, 
+            textAlign: 'center',
+            color: 'rgba(255, 255, 255, 0.8)'
+          }}>
+            <h3 style={{ marginBottom: 10 }}>Media Not Available</h3>
+            <p style={{ fontSize: 14 }}>Slide {index} - Media count: {media?.length || 0}</p>
+            <p style={{ fontSize: 14 }}>Valid media: {validMedia.length}</p>
           </div>
         </div>
       )}
@@ -718,8 +765,8 @@ const MediaSlide: React.FC<MediaSlideProps> = ({
           padding: '20px 30px',
           borderRadius: 15,
           backdropFilter: 'blur(10px)',
-          marginTop: hasMedia ? 0 : 'auto',
-          marginBottom: hasMedia ? 20 : 'auto',
+          marginTop: validMedia.length > 0 ? 0 : 'auto',
+          marginBottom: validMedia.length > 0 ? 20 : 'auto',
         }}
       >
         <h2
@@ -1212,19 +1259,16 @@ const CustomIntro: React.FC<{ videoPath?: string }> = ({ videoPath = "/intro.mp4
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const opacity = Math.min(1, frame / FADE_DURATION);
-  const isDataUrl = videoPath.startsWith('data:');
   
   // Log frame information for debugging timing issues
   if (frame % 30 === 0) { // Log once per second
-    console.log(`[CustomIntro] Second ${frame/fps}: Playing intro video`);
+    console.log(`[CustomIntro] Second ${frame/fps}: Playing intro video from ${videoPath}`);
   }
   
   // The total duration in our timeline (in frames)
   const totalDurationFrames = CUSTOM_INTRO_DURATION;
   
   // Calculate playback rate to ensure video fits exactly in the allocated duration
-  // For a 13-second video at 34fps source played in a 30fps composition over 13 seconds:
-  // We want playbackRate = 1.0 to maintain the original timing
   const playbackRate = 1.0;
   
   return (
@@ -1256,6 +1300,8 @@ const CustomIntro: React.FC<{ videoPath?: string }> = ({ videoPath = "/intro.mp4
         backgroundColor: 'rgba(0,0,0,0.5)',
       }}>
         Intro: {Math.round(frame/fps)}s / {Math.round(totalDurationFrames/fps)}s
+        <br />
+        Video: {videoPath.substring(0, 30)}...
       </div>
     </AbsoluteFill>
   );
@@ -1276,6 +1322,25 @@ export const VideoLecture: React.FC<VideoLectureProps> = ({
   console.log(`[VideoLecture] Received script with title: ${title} and ${paragraphs.length} paragraphs`);
   console.log(`[VideoLecture] Audio URL: ${audioUrl ? 'provided' : 'not provided'}`);
   console.log(`[VideoLecture] Custom intro path: ${customIntroPath ? customIntroPath : 'not provided'}`);
+  
+  // Log media information in detail
+  console.log(`[VideoLecture] Media provided: ${media ? 'YES' : 'NO'}`);
+  if (media) {
+    console.log(`[VideoLecture] Media is array: ${Array.isArray(media)}`);
+    console.log(`[VideoLecture] Media segments: ${media.length}`);
+    
+    // Debug first few media items
+    if (Array.isArray(media) && media.length > 0) {
+      media.slice(0, 3).forEach((segment, i) => {
+        console.log(`[VideoLecture] Media segment ${i}: ${Array.isArray(segment) ? segment.length : 'not array'} items`);
+        if (Array.isArray(segment) && segment.length > 0) {
+          segment.slice(0, 2).forEach((item, j) => {
+            console.log(`[VideoLecture] Media item ${i}.${j}: URL: ${item?.url?.substring(0, 50)}... Type: ${item?.type}`);
+          });
+        }
+      });
+    }
+  }
 
   // Filter out section breaks (paragraphs that only contain "--" characters)
   const filteredParagraphs = paragraphs.filter(p => {
@@ -1297,14 +1362,17 @@ export const VideoLecture: React.FC<VideoLectureProps> = ({
   // Get media for each slide
   const getMediaForSlide = (index: number): FetchedMedia[] => {
     if (!media || !Array.isArray(media) || index >= media.length) {
+      console.log(`No media for slide ${index}: media=${!!media}, isArray=${Array.isArray(media)}, length=${media?.length || 0}`);
       return [];
     }
-    return media[index] || [];
+    const slideMedia = media[index] || [];
+    console.log(`Slide ${index} media: ${slideMedia.length} items. First item URL: ${slideMedia[0]?.url?.substring(0, 50) || 'none'}`);
+    return slideMedia;
   };
 
   // Calculate total duration based on content
-  const useCustomIntro = USE_CUSTOM_INTRO && customIntroPath;
-  const introDuration = useCustomIntro ? CUSTOM_INTRO_DURATION : LOGO_DURATION;
+  const hasCustomIntro = !!customIntroPath;
+  const introDuration = hasCustomIntro ? CUSTOM_INTRO_DURATION : LOGO_DURATION;
   const titleDuration = TITLE_DURATION;
   const slideDuration = SLIDE_DURATION;
   const endDuration = END_LOGO_DURATION;
@@ -1329,49 +1397,47 @@ export const VideoLecture: React.FC<VideoLectureProps> = ({
   // Calculate total duration based on content
   const totalDuration = introDuration + titleDuration + (filteredParagraphs.length * slideDuration) + endDuration;
   
-  // Set audio to start exactly after intro + title (13s intro + 4s title = 17s)
-  // At 30fps: (13 + 4) * 30 = 510 frames
-  const audioStartFrame = introDuration + titleDuration; // Dynamic calculation based on actual durations
+  // Set audio to start exactly after intro + title
+  const audioStartFrame = introDuration + titleDuration;
   console.log(`[VideoLecture] Audio will start at frame ${audioStartFrame} (${audioStartFrame/fps} seconds)`);
   console.log(`[VideoLecture] Timing breakdown: Intro=${introDuration/fps}s, Title=${titleDuration/fps}s, Total before audio=${audioStartFrame/fps}s`);
 
-  // Render content based on current frame
-  const renderCurrentContent = () => {
-    // Show intro
-    if (frame < introEndFrame) {
-      return useCustomIntro && customIntroPath 
-        ? <CustomIntro videoPath={customIntroPath} /> 
-        : <LogoIntro />;
-    }
-    
-    // Show title
-    if (frame < titleEndFrame) {
-      return <TitleSlide title={title} />;
-    }
-    
-    // Calculate current slide index
-    const slideIndex = Math.floor((frame - titleEndFrame) / slideDuration);
-    
-    // Show content slides
-    if (slideIndex < filteredParagraphs.length) {
-        return (
-            <TextSlide 
-          text={filteredParagraphs[slideIndex]} 
-          index={slideIndex}
-          includeAnimation={true}
-          includeGraph={slideIndex % 3 === 0} // Show graph on every third slide
-          media={getMediaForSlide(slideIndex)}
-        />
-      );
-    }
-    
-    // Show outro
-    return <LogoOutro />;
-  };
-
   return (
     <AbsoluteFill style={{ backgroundColor: '#111111' }}>
-      {renderCurrentContent()}
+      {/* Render intro using Sequence instead of conditional rendering */}
+      <Sequence durationInFrames={introDuration} from={0}>
+        {hasCustomIntro ? (
+          <CustomIntro videoPath={customIntroPath} />
+        ) : (
+          <LogoIntro />
+        )}
+      </Sequence>
+      
+      {/* Render title */}
+      <Sequence durationInFrames={titleDuration} from={introDuration}>
+        <TitleSlide title={title} />
+      </Sequence>
+      
+      {/* Render content slides */}
+      {filteredParagraphs.map((paragraph, index) => {
+        const startFrame = titleEndFrame + (index * slideDuration);
+        return (
+          <Sequence key={index} durationInFrames={slideDuration} from={startFrame}>
+            <TextSlide 
+              text={paragraph} 
+              index={index}
+              includeAnimation={true}
+              includeGraph={index % 3 === 0} // Show graph on every third slide
+              media={getMediaForSlide(index)}
+            />
+          </Sequence>
+        );
+      })}
+      
+      {/* Render outro */}
+      <Sequence durationInFrames={endDuration} from={titleEndFrame + (filteredParagraphs.length * slideDuration)}>
+        <LogoOutro />
+      </Sequence>
       
       {/* Render audio with precise timing */}
       {audioUrl && (

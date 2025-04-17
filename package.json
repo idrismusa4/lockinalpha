@@ -12,10 +12,14 @@
     "lint": "next lint",
     "netlify:build": "FFMPEG_WASM_MODE=true next build",
     "vercel:build": "npm run vercel:prebuild && next build",
-    "prepare-deploy": "node scripts/prepare-deployment.js"
+    "prepare-deploy": "node scripts/prepare-deployment.js",
+    "deploy:remotion": "env-cmd -f .env.local remotion lambda sites create app/remotion/root.tsx --site-name=remotion-render-dev"
   },
   "dependencies": {
     "@aws-sdk/client-polly": "^3.758.0",
+    "@aws-sdk/s3-request-presigner": "^3.787.0",
+    "@clerk/nextjs": "^6.15.0",
+    "@clerk/themes": "^2.2.32",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.1",
     "@google/generative-ai": "^0.24.0",
@@ -63,6 +67,7 @@
     "dotenv": "^16.3.1",
     "embla-carousel-react": "^8.0.0",
     "esbuild": "^0.25.1",
+    "framer-motion": "^12.7.3",
     "input-otp": "^1.0.1",
     "lucide-react": "^0.330.0",
     "mammoth": "^1.6.0",
@@ -86,7 +91,7 @@
     "tailwindcss-animate": "^1.0.7",
     "uuid": "^9.0.1",
     "vaul": "^0.8.0",
-    "vercel": "^25.2.0",
+    "vercel": "^41.6.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {

@@ -52,6 +52,7 @@ export const RemotionVideo = () => {
         defaultProps={{
           script: "# Sample Video Lecture\n\nThis is a sample video lecture script.\n\nIt demonstrates how the video will look with multiple paragraphs.\n\nYou can include data that will show as graphs and charts.\n\nThe stickman will animate differently based on the content and context.",
           audioUrl: "",
+          customIntroPath: "/intro.mp4", // Default intro video path
         }}
       />
     </>

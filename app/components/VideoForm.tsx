@@ -162,6 +162,8 @@ export default function VideoForm() {
       const sceneKeywords = extractSceneKeywords(script);
       setKeywords(sceneKeywords);
       
+      console.log(`Extracted ${sceneKeywords.length} keyword sets from script`);
+      
       // Fetch media for each scene
       const fetchMediaPromise = fetch('/api/fetchMedia', {
         method: 'POST',
@@ -180,23 +182,57 @@ export default function VideoForm() {
       const response = await Promise.race([fetchMediaPromise, timeoutPromise]) as Response;
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch media: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('Media API error response:', errorText);
+        throw new Error(`Failed to fetch media: ${response.status} ${response.statusText}`);
       }
       
       const result = await response.json();
+      
+      if (!result.media || !Array.isArray(result.media)) {
+        console.error('Invalid media API response format:', result);
+        throw new Error('Invalid media response format from server');
+      }
+      
+      console.log(`Received ${result.media.length} media segments from API`);
+      
+      // Check if we actually got any media items
+      const totalMediaItems = result.media.reduce((sum: number, items: any[]) => sum + (items?.length || 0), 0);
+      
+      if (totalMediaItems === 0) {
+        console.warn('No media items were found for the script');
+        toast({
+          title: "No Media Found",
+          description: "Could not find relevant media for your script. Your video will be created without visuals.",
+          variant: "warning",
+        });
+      }
+      
       setMediaResults(result.media);
       setHasAnalyzed(true);
 
       toast({
         title: "Script Analysis Complete",
-        description: "Your script has been analyzed and media has been selected for your video.",
+        description: `${totalMediaItems} media items found for your video.`,
       });
     } catch (err) {
       console.error('Error analyzing script:', err);
       setAnalyzeError(err instanceof Error ? err.message : 'An unknown error occurred');
+      
+      let errorMessage = 'Could not complete script analysis.';
+      
+      // Add more specific error messages
+      if (err instanceof Error) {
+        if (err.message.includes('timed out')) {
+          errorMessage = 'Media search took too long. Try again or use a shorter script.';
+        } else if (err.message.includes('API key')) {
+          errorMessage = 'Media service API key issue. Please contact support.';
+        }
+      }
+      
       toast({
         title: "Analysis Failed",
-        description: "Could not complete script analysis. Please try again.",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -238,6 +274,50 @@ export default function VideoForm() {
       
       // Include media results if available
       const mediaToUse = hasAnalyzed ? mediaResults : undefined;
+      
+      // Deep validation and logging of media data
+      console.log(`Video generation starting with job ID: ${jobId}`);
+      console.log(`Script length: ${script.length} characters, split into ${script.split('\n\n').length} paragraphs`);
+      console.log(`Has analyzed: ${hasAnalyzed}`);
+      
+      if (hasAnalyzed) {
+        console.log(`Media results array length: ${mediaResults.length}`);
+        
+        // Check if media results is valid array with content
+        if (!Array.isArray(mediaResults)) {
+          console.error('Media results is not an array!', mediaResults);
+        } else if (mediaResults.length === 0) {
+          console.warn('Media results array is empty');
+        } else {
+          // Check first few segments
+          mediaResults.slice(0, 3).forEach((segment, i) => {
+            if (!Array.isArray(segment)) {
+              console.error(`Media segment ${i} is not an array!`, segment);
+            } else {
+              console.log(`Media segment ${i} has ${segment.length} items`);
+              
+              // Check items in this segment
+              segment.slice(0, 2).forEach((item, j) => {
+                if (!item || typeof item !== 'object') {
+                  console.error(`Media item ${i}.${j} is invalid!`, item);
+                } else if (!item.url) {
+                  console.error(`Media item ${i}.${j} is missing URL!`, item);
+                } else {
+                  console.log(`Media item ${i}.${j} - URL: ${item.url.substring(0, 30)}... Type: ${item.type}`);
+                }
+              });
+            }
+          });
+          
+          // Count total valid media items
+          const totalValidItems = mediaResults.reduce((total, segment) => {
+            if (!Array.isArray(segment)) return total;
+            return total + segment.filter(item => item && typeof item === 'object' && !!item.url).length;
+          }, 0);
+          
+          console.log(`Total valid media items: ${totalValidItems}`);
+        }
+      }
       
       // Start the render process with selected voice and media
       const url = await renderVideoWithRemotion({

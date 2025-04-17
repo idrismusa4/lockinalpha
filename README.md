@@ -69,9 +69,9 @@ LockIn Alpha helps you automatically create engaging video lectures from your st
    ```
    NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
    NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-   MY_AWS_ACCESS_KEY_ID=your_aws_access_key_id
-   MY_AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
-   MY_AWS_REGION=us-east-1
+   AWS_ACCESS_KEY_ID=your_aws_access_key_id
+   AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+   AWS_REGION=us-east-1
    ```
 
 4. Start the development server:
@@ -90,9 +90,9 @@ LockIn Alpha helps you automatically create engaging video lectures from your st
 5. Add the following environment variables:
    - `NEXT_PUBLIC_SUPABASE_URL`: Your Supabase URL
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Your Supabase anonymous key
-   - `MY_AWS_ACCESS_KEY_ID`: Your AWS access key ID
-   - `MY_AWS_SECRET_ACCESS_KEY`: Your AWS secret access key
-   - `MY_AWS_REGION`: us-east-1 (or your preferred region)
+   - `AWS_ACCESS_KEY_ID`: Your AWS access key ID
+   - `AWS_SECRET_ACCESS_KEY`: Your AWS secret access key
+   - `AWS_REGION`: us-east-1 (or your preferred region)
 6. Click "Deploy"
 
 ### Step 5: Using the Application

@@ -1,0 +1,61 @@
+{
+  "name": "LockIn Alpha",
+  "description": "AI Video Lectures Generator",
+  "repository": "https://github.com/your-username/lockinalpha",
+  "keywords": ["remotion", "nextjs", "video-generation", "lambda"],
+  "env": {
+    "AWS_ACCESS_KEY_ID": {
+      "description": "AWS Access Key for S3 and Lambda services",
+      "required": true
+    },
+    "AWS_SECRET_ACCESS_KEY": {
+      "description": "AWS Secret Access Key for S3 and Lambda services",
+      "required": true
+    },
+    "AWS_REGION": {
+      "description": "AWS Region for S3 and Lambda services",
+      "value": "us-east-1"
+    },
+    "REMOTION_AWS_REGION": {
+      "description": "AWS Region for Remotion Lambda",
+      "value": "us-east-1"
+    },
+    "REMOTION_FUNCTION_NAME": {
+      "description": "Remotion Lambda function name",
+      "value": "remotion-render-4-0-286-mem3008mb-disk2048mb-300sec"
+    },
+    "REMOTION_S3_BUCKET": {
+      "description": "S3 bucket for Remotion Lambda renders",
+      "value": "remotion-bucket-lockin"
+    },
+    "REMOTION_SERVE_URL": {
+      "description": "URL where Remotion bundle is served",
+      "required": true
+    },
+    "REMOTION_COMPOSITION_ID": {
+      "description": "Remotion composition ID",
+      "value": "VideoLecture"
+    },
+    "REMOTION_SITE_NAME": {
+      "description": "Site name for Remotion renders",
+      "value": "remotion-render-prod"
+    },
+    "USE_LOCAL_RENDERING": {
+      "description": "Flag to control if local rendering is used (should be false in production)",
+      "value": "false"
+    },
+    "NEXT_PUBLIC_SUPABASE_URL": {
+      "description": "Supabase project URL",
+      "required": true
+    },
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": {
+      "description": "Supabase anonymous key",
+      "required": true
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    }
+  ]
+} 
